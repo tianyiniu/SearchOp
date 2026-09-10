@@ -1,0 +1,1 @@
+python scripts/evolve_program_mcq.py --evolve --live --generations 40 --population 16 --offspring 4 --novelty-budget 300 --recheck-top 3 --evolved-out outputs/program_mcq_evolved_live.json --save-all outputs/program_mcq_all_live.jsonl

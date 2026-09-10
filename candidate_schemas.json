@@ -1,0 +1,21 @@
+{
+  "double_critic": {
+    "rounds": [{"personas": ["solver"]}, {"personas": ["critic"]}, {"personas": ["critic"]}],
+    "final": "last"
+  },
+  "triple_critic": {
+    "rounds": [{"personas": ["solver"]}, {"personas": ["critic"]}, {"personas": ["critic"]},
+               {"personas": ["critic"]}],
+    "final": "last"
+  },
+  "double_critic_synth": {
+    "rounds": [{"personas": ["solver"]}, {"personas": ["critic"]}, {"personas": ["critic"]},
+               {"personas": ["synthesizer"]}],
+    "final": "last"
+  },
+  "wide_then_critics": {
+    "rounds": [{"personas": ["solver", "solver", "solver", "solver"]}, {"personas": ["solver"]},
+               {"personas": ["critic"]}, {"personas": ["critic"]}, {"personas": ["critic"]}],
+    "final": "last"
+  }
+}

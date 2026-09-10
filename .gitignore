@@ -1,0 +1,7 @@
+.env
+export_schema/
+outputs/
+datasets/
+Wikipedia_cache/
+backups/
+doc_context_cache/
