@@ -25,5 +25,12 @@ CUDA_VISIBLE_DEVICES="$CUDA_DEVICES" VLLM_USE_V1=1 vllm serve "Qwen/Qwen3.5-27B"
   --tensor-parallel-size "$TP_SIZE" \
   --enable-auto-tool-choice \
   --tool-call-parser qwen3_coder \
-  --reasoning-parser qwen3 \
-  --gpu-memory-utilization 0.9 
+  --default-chat-template-kwargs '{"enable_thinking": false}' \
+  --gpu-memory-utilization 0.9
+
+# --default-chat-template-kwargs applies the switch to EVERY request (vllm
+# merges server defaults first, a request-level chat_template_kwargs still
+# overrides). It helps only if the server was rejecting our per-request kwarg.
+# If Qwen3.5's chat template ignores enable_thinking instead, this changes
+# nothing and the model keeps thinking. To tell the two apart:
+#   python scripts/thinking_probe.py http://localhost:7472/v1 Qwen/Qwen3.5-27B

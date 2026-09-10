@@ -373,6 +373,12 @@ def path_key(rounds: list[dict], prompts: dict | None = None) -> str:
     if prompts:
         blob = json.dumps({k: prompts[k] for k in sorted(prompts)}, separators=(",", ":"))
         key["p"] = hashlib.sha1(blob.encode()).hexdigest()[:12]
+    # How much of each prior response a persona was shown changes what the
+    # model saw, so it has to change the key too -- otherwise recordings made
+    # under a different window replay as if they were the same run. Emitted
+    # only when non-default, so every existing recording keeps its key.
+    if (sig := D.digest_signature()) is not None:
+        key["d"] = list(sig)
     return json.dumps(key, sort_keys=False, separators=(",", ":"))
 
 

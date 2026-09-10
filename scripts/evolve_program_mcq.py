@@ -91,6 +91,14 @@ ACTIONS: dict[str, list[dict]] = {
     "synthesizer": [{"personas": ["synthesizer"], "sees": "all"}],
 }
 
+# Moves built on the eliminator. It refuses to answer and emits a survivor
+# list instead, which is awkward to justify in a deployed system, and the
+# measurements are against it too: worst verified solve rate of any move
+# (0.3%), 81% of the time it struck out the correct option, and its survivor
+# list reached the next persona only 2% of the time under the default digest
+# window. --no-eliminator drops these moves and swaps in eliminator-free seeds.
+ELIMINATOR_ACTIONS = ("eliminate", "elim_blind")
+
 STOP_READS = ("last_commit", "last_speaker")
 
 
@@ -449,6 +457,41 @@ PROGRAM_FIXED = {
     "default": "stop:last_speaker",
 }
 
+# Experiment B's shape without the eliminator. The settled and churn tracks are
+# unchanged; the parked track goes straight to the fresh outside voices that
+# the live search found on its own (blind expert, then the expert+solver pair),
+# instead of routing them through an eliminator whose survivor list they could
+# not see anyway.
+PROGRAM_B_NOELIM = {
+    "plan": B.MASTER_ROUNDS,
+    "rules": [
+        {"when": ["step<=1"], "do": "continue"},
+        {"when": ["not_extended", "confirmed_switch"], "do": "stop:last_commit"},
+        {"when": ["plan_left"], "do": "continue"},
+        # parked: bring in voices that have not seen the stuck answer
+        {"when": ["not_extended", "parked"], "do": "expert_blind"},
+        {"when": ["last:expert_blind"], "do": "pair_expert_solver"},
+        {"when": ["last:pair_expert_solver", "last_round_agree"], "do": "stop:last_commit"},
+        {"when": ["last:pair_expert_solver"], "do": "verifier"},
+        {"when": ["ran:pair_expert_solver", "last:verifier"], "do": "stop:last_commit"},
+        # churn: judge between the candidates already on the table
+        {"when": ["not_extended"], "do": "verifier"},
+        {"when": ["last:verifier", "verifier_backed"], "do": "stop:last_commit"},
+        {"when": ["last:verifier"], "do": "synthesizer"},
+    ],
+    "default": "stop:last_commit",
+}
+
+
+def drop_eliminator() -> None:
+    """Remove the eliminator moves from the action menu for this process. Any
+    seed or mutation that used them is rebuilt without them."""
+    for name in ELIMINATOR_ACTIONS:
+        ACTIONS.pop(name, None)
+    global ROUND_KINDS
+    ROUND_KINDS = sorted({round_kind(s) for specs in ACTIONS.values() for s in specs}
+                         | {round_kind(s) for s in B.MASTER_ROUNDS})
+
 
 def derive_track(actions: list[str], plan_len: int) -> tuple[str, str | None]:
     """Reconstruct experiment B's track/closer labels from a replayed path, for
@@ -713,6 +756,13 @@ def evolve(args) -> None:
         runner = CacheRunner(read_only)
 
     seeds = {"program_b": PROGRAM_B, "program_fixed": PROGRAM_FIXED, **PROBES}
+    if getattr(args, "no_eliminator", False):
+        seeds["program_b"] = PROGRAM_B_NOELIM
+        seeds = {k: p for k, p in seeds.items()
+                 if all(r["do"] in ACTIONS or r["do"] == "continue" or r["do"].startswith("stop:")
+                        for r in p["rules"])}
+        print(f"eliminator removed: {len(ACTIONS)} moves available, "
+              f"{len(seeds)} seed programs")
     scores: dict[str, Eval] = {}        # canon -> train Eval
     programs: dict[str, dict] = {}
     live_spent: dict[str, int] = {}     # canon -> novel calls it paid for
@@ -985,6 +1035,18 @@ if __name__ == "__main__":
     ap.add_argument("--limit", type=int, default=None,
                     help="Debug only: use just the first N questions of the dataset "
                          "(before the train/dev split). Never for a real run.")
+    ap.add_argument("--no-eliminator", action="store_true",
+                    help="Drop the eliminator moves (eliminate, elim_blind) and use "
+                         "eliminator-free seeds. It cannot be justified in a deployed "
+                         "system and its survivor list rarely reached the next persona.")
+    ap.add_argument("--digest-head", type=int, default=700,
+                    help="Characters of each prior response a later persona sees, from "
+                         "the start (default 700, the window every 14B recording used).")
+    ap.add_argument("--digest-tail", type=int, default=0,
+                    help="Characters shown from the END of each prior response as well. "
+                         "The committed conclusion sits at ~99%% of the text, so a tail "
+                         "is what carries it. Non-default windows change the round cache "
+                         "key, so they can never replay 700/0 recordings by mistake.")
     ap.add_argument("--max-calls-per-question", type=int, default=16,
                     help="A program that would exceed this many calls on one question is "
                          "stopped instead (never binds on the hand-written programs).")
@@ -1027,6 +1089,12 @@ if __name__ == "__main__":
                       help="Open the live cache even if its lock file exists (only when the "
                            "run that made it is known to be dead).")
     args = ap.parse_args()
+    if (args.digest_head, args.digest_tail) != (700, 0):
+        D.set_digest(args.digest_head, args.digest_tail)
+        print(f"digest window: {args.digest_head} head + {args.digest_tail} tail chars "
+              f"(non-default: round cache keys differ from the 700/0 recordings)")
+    if getattr(args, "no_eliminator", False):
+        drop_eliminator()
     if args.evolve:
         # A command pasted across two lines silently loses its trailing flags.
         # So: never lose the per-program log in live mode, and show every

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from collections import Counter
 from copy import deepcopy
 
@@ -50,20 +51,69 @@ def extract_letter(text: str, n_options: int) -> str | None:
     return None
 
 
+def _message_text(msg) -> str:
+    """The model's visible output. A server running --reasoning-parser puts the
+    thinking in `reasoning_content` and only what follows in `content`; if the
+    model never closes its thinking block, `content` comes back empty and the
+    answer, if there is one, is in the reasoning field. Prefer content, fall
+    back to reasoning, so both server configurations behave the same here."""
+    content = (getattr(msg, "content", None) or "").strip()
+    if content:
+        return content
+    return (getattr(msg, "reasoning_content", None)
+            or getattr(msg, "reasoning", None) or "")
+
+
+# How to ask a Qwen model not to emit a thinking block. Tried in order; the
+# first one the server accepts is remembered per (client, model) so the cost is
+# one probe per run, not per call. Order matters for reproducibility: the
+# original mechanism is first, so Qwen3-14B behaves exactly as it always has.
+_THINK_OFF = (
+    {"chat_template_kwargs": {"enable_thinking": False}},   # Qwen3 chat template
+    {"reasoning_effort": "none"},                           # Qwen3.5 / newer vLLM
+    {},                                                     # nothing worked: let it think
+)
+_think_mode: dict[tuple[int, str], dict] = {}
+_think_lock = threading.Lock()
+
+
 def chat(client, model: str, system: str, user: str, temperature: float,
          max_tokens: int = 3072, thinking: bool = False) -> str:
-    """One chat call. thinking=False disables Qwen's <think> block (best-effort:
-    falls back to a plain call if the server rejects the kwarg)."""
-    for extra in ({"chat_template_kwargs": {"enable_thinking": thinking}}, {}):
+    """One chat call. With thinking=False, ask the server to skip the thinking
+    block, trying each known mechanism until one is accepted AND actually
+    yields visible output. An unusable reply (empty, or cut off before the
+    model committed) makes the next mechanism worth trying."""
+    if thinking:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "system", "content": system},
+                      {"role": "user", "content": user}],
+            temperature=temperature, max_tokens=max_tokens)
+        return _message_text(resp.choices[0].message)
+
+    key = (id(client), model)
+    with _think_lock:
+        known = _think_mode.get(key)
+    for extra in ((known,) if known is not None else _THINK_OFF):
         try:
             resp = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "system", "content": system},
                           {"role": "user", "content": user}],
                 temperature=temperature, max_tokens=max_tokens, extra_body=extra)
-            return resp.choices[0].message.content or ""
         except Exception:
-            continue
+            continue                       # server rejected the kwarg: try the next
+        text = _message_text(resp.choices[0].message)
+        # Truncated mid-thought is the signature of thinking that was not
+        # disabled; do not lock in a mechanism that produces it. (getattr:
+        # test stubs and some clients do not expose finish_reason.)
+        truncated = getattr(resp.choices[0], "finish_reason", None) == "length"
+        if text and not truncated:
+            with _think_lock:
+                _think_mode.setdefault(key, extra)
+            return text
+        if known is not None:
+            return text                    # mechanism already chosen; report what came back
     return ""
 
 
@@ -172,10 +222,49 @@ def build_fixed_schema(name: str, debate_k: int = 3) -> dict:
 
 # --- executor: run a schema, return the committed LETTER --------------------
 
+# How much of a prior persona's response a later one is shown. The default
+# (700 head, no tail) is the original behaviour and is what every Qwen3-14B
+# recording was produced under -- do not change it for those runs.
+#
+# Why a tail is worth having: measured over 60k recorded responses, 78% run
+# past 700 characters and the committed conclusion sits at 98-99% of the text,
+# so a head-only window keeps the setup and discards the payoff. The
+# eliminator was the extreme case: its SURVIVING line reached the next
+# persona 2% of the time.
+DIGEST_HEAD = 700
+DIGEST_TAIL = 0
+
+
+def set_digest(head: int, tail: int = 0) -> None:
+    """Set the visible window for this process. Also changes the round cache
+    key (see schema_fitness.path_key), so recordings made under different
+    windows can never be replayed as if they were the same."""
+    global DIGEST_HEAD, DIGEST_TAIL
+    DIGEST_HEAD, DIGEST_TAIL = head, tail
+
+
+def digest_signature() -> tuple[int, int] | None:
+    """(head, tail) when non-default, else None. Part of the cache key."""
+    return None if (DIGEST_HEAD, DIGEST_TAIL) == (700, 0) else (DIGEST_HEAD, DIGEST_TAIL)
+
+
+def _clip(text: str) -> str:
+    """The visible part of one response: the opening, then the closing, with a
+    marker where the middle was dropped. With tail=0 this is a plain head cut,
+    byte-identical to what the original code produced."""
+    t = (text or "").strip()
+    head, tail = DIGEST_HEAD, DIGEST_TAIL
+    if tail <= 0:
+        return t[:head]
+    if len(t) <= head + tail:
+        return t
+    return f"{t[:head]}\n[... {len(t) - head - tail} characters omitted ...]\n{t[-tail:]}"
+
+
 def _digest(prior: list[tuple[str, str]], n: int) -> str:
     """Show each prior persona's chosen letter and its (bounded) reasoning so later
     personas can actually debate the reasoning, not just the letters."""
-    return "\n\n".join(f"[{p}] chose {extract_letter(r, n) or '?'}:\n{r.strip()[:700]}"
+    return "\n\n".join(f"[{p}] chose {extract_letter(r, n) or '?'}:\n{_clip(r)}"
                        for p, r in prior)
 
 
@@ -200,7 +289,7 @@ def _visible(all_rounds: list[list[tuple[str, str]]], mode: str, n: int) -> str:
             return ""
         return "Prior committed answers: " + ", ".join(f"{l} x{c}" for l, c in tally.most_common())
     if mode == "no_letters":     # the reasoning, with the commitments removed
-        parts = [f"[{p}]:\n{_strip_commitment(r)[:700]}" for p, r in flat]
+        parts = [f"[{p}]:\n{_clip(_strip_commitment(r))}" for p, r in flat]
         return "Prior reasoning (conclusions withheld):\n" + "\n\n".join(parts)
     return "Prior responses:\n" + _digest(flat, n)      # "all"
 

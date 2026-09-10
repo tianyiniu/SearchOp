@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import random
 import sys
 import tempfile
 from pathlib import Path
@@ -142,6 +143,65 @@ def test_torn_records_are_skipped():
     runner.close()
 
 
+def test_digest_window_and_cache_key():
+    print("digest window: head+tail clipping and cache-key separation")
+    import schema_fitness as SF
+    text = "A" * 100 + "B" * 2000 + "C" * 100 + "\nANSWER: D"
+    try:
+        check(D.digest_signature() is None, "default window is not part of the key")
+        d0 = D._clip(text)
+        check(d0 == text.strip()[:700] and "ANSWER" not in d0,
+              "default: head-only cut, conclusion lost", f"{len(d0)} chars")
+        spec = [{"personas": ["critic"], "sees": "all"}]
+        k_default = SF.path_key(spec)
+        D.set_digest(300, 900)
+        d1 = D._clip(text)
+        check(d1.startswith("A" * 100) and d1.rstrip().endswith("ANSWER: D"),
+              "head+tail: keeps the opening AND the conclusion", f"{len(d1)} chars")
+        check("omitted" in d1, "elision marker names what was dropped")
+        check(D.digest_signature() == (300, 900), "non-default window is reported")
+        check(SF.path_key(spec) != k_default,
+              "cache key changes with the window, so recordings cannot mix")
+        short = "short answer\nANSWER: B"
+        check(D._clip(short) == short, "a response inside the budget is untouched")
+    finally:
+        D.set_digest(700, 0)
+    check(D.digest_signature() is None and SF.path_key([{"personas": ["critic"], "sees": "all"}]) == k_default,
+          "restoring the default restores the original key")
+
+
+def test_no_eliminator():
+    print("--no-eliminator removes the moves and the seeds that need them")
+    import importlib
+    m = importlib.reload(M)
+    check("eliminate" in m.ACTIONS and "elim_blind" in m.ACTIONS, "eliminator moves present by default")
+    check(any(r["do"] == "elim_blind" for r in m.PROGRAM_B["rules"]),
+          "experiment B's parked track uses the eliminator")
+    m.drop_eliminator()
+    check("eliminate" not in m.ACTIONS and "elim_blind" not in m.ACTIONS, "moves dropped")
+    check("eliminator" not in m.ROUND_KINDS, "eliminator gone from the round-kind menu",
+          str(m.ROUND_KINDS))
+    try:
+        m.validate_program(m.PROGRAM_B)
+        check(False, "the old program_b should no longer validate")
+    except AssertionError:
+        check(True, "the old program_b no longer validates")
+    m.validate_program(m.PROGRAM_B_NOELIM)
+    check(True, "the eliminator-free seed validates")
+    rng = random.Random(3)
+    prog = m.PROGRAM_B_NOELIM
+    for _ in range(300):
+        prog = m.mutate_program(prog, rng)
+        conds = [c for r in prog["rules"] for c in r["when"]]
+        acts = [r["do"] for r in prog["rules"]]
+        if any("elim" in c for c in conds) or any("elim" in a for a in acts):
+            check(False, "a mutation reintroduced an eliminator move")
+            break
+    else:
+        check(True, "300 mutations never reintroduce the eliminator")
+    importlib.reload(M)          # leave the module as the other tests expect
+
+
 def test_call_cap_and_round_kinds():
     print("per-question call cap and round-content conditions")
     runner = make_runner(TMP / "live2.jsonl")
@@ -209,7 +269,7 @@ def test_evolve_live_end_to_end():
         base_urls="http://127.0.0.1:1/v1", model="stub", temperature=0.7,
         answer_tokens=64, api_key="EMPTY", novelty_budget=40, prescreen_margin=1.0,
         min_coverage=0.0, workers=4, recheck_top=2, recheck_rep=1, recheck_n=8,
-        recheck_baselines=True, ignore_cache_lock=False,
+        recheck_baselines=True, ignore_cache_lock=False, no_eliminator=False,
         max_total_calls=100_000, generations=2, population=4, offspring=2,
         evolved_out=TMP / "evolved.json", save_all=TMP / "all.jsonl",
         bestofn_cache=Path("does/not/exist.jsonl"))
@@ -248,6 +308,8 @@ def test_evolve_live_end_to_end():
 if __name__ == "__main__":
     test_budget_and_cache()
     test_torn_records_are_skipped()
+    test_digest_window_and_cache_key()
+    test_no_eliminator()
     test_call_cap_and_round_kinds()
     test_eval_merge()
     test_evolve_live_end_to_end()
