@@ -5,3 +5,5 @@ datasets/
 Wikipedia_cache/
 backups/
 doc_context_cache/
+archive/
+baselines/

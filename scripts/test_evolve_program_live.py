@@ -48,6 +48,7 @@ def stub_execute_round(client, model, question, options, round_spec, all_rounds,
     return out
 
 
+REAL_EXECUTE_ROUND = D.execute_round
 D.execute_round = stub_execute_round
 
 rows_all = json.loads(Path("datasets/supergpqa_strict_train.json").read_text())
@@ -188,6 +189,10 @@ def test_no_eliminator():
         check(True, "the old program_b no longer validates")
     m.validate_program(m.PROGRAM_B_NOELIM)
     check(True, "the eliminator-free seed validates")
+    # the reference programs reported at the end must also be runnable
+    for nm, p in (("program_fixed", m.PROGRAM_FIXED), ("solver_critic", m.PROBES["solver_critic"])):
+        m.validate_program(p)
+    check(True, "the other reference programs still validate without the eliminator")
     rng = random.Random(3)
     prog = m.PROGRAM_B_NOELIM
     for _ in range(300):
@@ -301,8 +306,243 @@ def test_evolve_live_end_to_end():
     check(all(r["live_calls_spent"] <= 40 + 8 for r in recs),
           "no candidate exceeded budget + one question's cap",
           str(max(r["live_calls_spent"] for r in recs)))
-    check(set(out["baselines_fresh"]) == {"program_b", "program_fixed", "solver_critic"},
+    check(set(out["baselines_fresh"]) == {"program_b", "program_b_vote", "program_fixed",
+                                           "solver_critic"},
           "reference programs got the same fresh dev run")
+
+
+
+def test_vote_read_and_commit_followup():
+    print("vote read-off and commit follow-up")
+    # vote: plurality over every committed letter, ties to the earliest
+    import schema_fitness as SF
+    from collections import Counter
+    rounds = [[("solver", "ANSWER: A"), ("solver", "ANSWER: B"), ("solver", "ANSWER: B")],
+              [("critic", "ANSWER: B")], [("critic", "no letter here")]]
+    letters = SF.committed_letters(rounds, 4)
+    check(Counter(letters).most_common(1)[0][0] == "B", "plurality picks the modal letter")
+    tied = SF.committed_letters([[("solver", "ANSWER: C"), ("solver", "ANSWER: A")],
+                                 [("critic", "ANSWER: A"), ("critic", "ANSWER: C")]], 4)
+    check(Counter(tied).most_common(1)[0][0] == "C", "a tie goes to the letter committed first")
+    prog = M.with_vote_read(M.PROGRAM_FIXED)
+    M.validate_program(prog)
+    check(prog["default"] == "stop:vote" and all(
+        not r["do"].startswith("stop:") or r["do"] == "stop:vote" for r in prog["rules"]),
+        "with_vote_read rewrites every stop")
+    check("vote" in M.STOP_READS, "vote is a legal read")
+
+    # commit follow-up: a truncated reply gets one continuation, appended
+    class Msg:
+        def __init__(self, c): self.content = c
+    class Choice:
+        def __init__(self, c): self.message = Msg(c); self.finish_reason = "stop"
+    class Resp:
+        def __init__(self, c): self.choices = [Choice(c)]
+    class FakeCompletions:
+        def __init__(self): self.calls = []
+        def create(self, **kw):
+            self.calls.append(kw)
+            if len(kw["messages"]) == 4:           # the nudge: system, user, assistant, user
+                return Resp("ANSWER: C")
+            return Resp("Long derivation that never commits" * 3)
+    class FakeClient:
+        def __init__(self):
+            self.chat = type("C", (), {})()
+            self.chat.completions = FakeCompletions()
+    seen = {"n": 0}
+    D.on_followup = lambda: seen.__setitem__("n", seen["n"] + 1)
+    D.set_commit_followup(True)
+    try:
+        cli = FakeClient()
+        out = REAL_EXECUTE_ROUND(cli, "stub", "Q?", ["a", "b", "c", "d"],
+                                 {"personas": ["solver"]}, [], 0.7, 64)
+        text = out[0][1]
+        check(D.extract_letter(text, 4) == "C", "follow-up commit is parseable", text[-40:])
+        check(D.COMMIT_MARK in text, "appended text carries the marker")
+        check(len(cli.chat.completions.calls) == 2, "exactly one extra call",
+              len(cli.chat.completions.calls))
+        check(cli.chat.completions.calls[1]["max_tokens"] == D.COMMIT_MAX_TOKENS,
+              "follow-up uses the short budget")
+        check(seen["n"] == 1, "runner hook counted the follow-up")
+        # a prose commit reply is normalized to an ANSWER line; a derivation is not
+        for txt, want in (("The answer is **D** because of the units.", "D"),
+                          ("Based on the above, option (B) is correct.", "B"),
+                          ("\\boxed{A}", "A"), ("C", "C"),
+                          ("ANSWER: E", None),                 # E is out of range for 4 options
+                          ("The Reynolds number is 2.3e5, so the flow is turbulent", None)):
+            check(D.commit_letter_lenient(txt, 4) == want, f"lenient commit parse {txt[:30]!r}",
+                  D.commit_letter_lenient(txt, 4))
+        cli3 = FakeClient()
+        cli3.chat.completions.create = (lambda **kw: Resp("So the answer is **B**, since x=2.")
+                                        if len(kw["messages"]) == 4 else Resp("no commit here"))
+        out3 = REAL_EXECUTE_ROUND(cli3, "stub", "Q?", ["a", "b", "c", "d"],
+                                  {"personas": ["solver"]}, [], 0.7, 64)
+        check(D.extract_letter(out3[0][1], 4) == "B" and out3[0][1].endswith("ANSWER: B"),
+              "prose commit gets a normalized ANSWER line", out3[0][1][-60:])
+        # a reply that already commits gets no follow-up
+        cli2 = FakeClient()
+        cli2.chat.completions.create = lambda **kw: Resp("Reasoning. ANSWER: B")
+        out2 = REAL_EXECUTE_ROUND(cli2, "stub", "Q?", ["a", "b", "c", "d"],
+                                  {"personas": ["solver"]}, [], 0.7, 64)
+        check(D.COMMIT_MARK not in out2[0][1], "committed reply is left alone")
+        # the cache key changes with the follow-up on, and only then
+        k_on = SF.path_key([{"personas": ["solver"]}])
+        D.set_commit_followup(False)
+        k_off = SF.path_key([{"personas": ["solver"]}])
+        check(k_on != k_off and '"c":"1"' in k_on and '"c"' not in k_off,
+              "follow-up is part of the cache key", k_on)
+    finally:
+        D.set_commit_followup(False)
+        D.on_followup = None
+
+
+def test_v2_summary_mode():
+    print("v2: careful-reasoning prompts, long replies, summary follow-up")
+    import schema_fitness as SF
+
+    class Msg:
+        def __init__(self, c): self.content = c
+    class Choice:
+        def __init__(self, c): self.message = Msg(c); self.finish_reason = "stop"
+    class Resp:
+        def __init__(self, c): self.choices = [Choice(c)]
+
+    class FakeClient:
+        """Reasoning reply for a 2-message call, summary reply for the 4-message
+        nudge. `summary` may be a string or an exception to raise."""
+        def __init__(self, reasoning, summary):
+            self.reasoning, self.summary, self.calls = reasoning, summary, []
+            self.chat = type("C", (), {})()
+            self.chat.completions = type("CC", (), {})()
+            self.chat.completions.create = self.create
+        def create(self, **kw):
+            self.calls.append(kw)
+            if len(kw["messages"]) == 4:
+                if isinstance(self.summary, Exception):
+                    raise self.summary
+                return Resp(self.summary)
+            return Resp(self.reasoning)
+
+    opts = ["a", "b", "c", "d"]
+    def run(cli):
+        return REAL_EXECUTE_ROUND(cli, "stub", "Q?", opts, {"personas": ["solver"]}, [], 0.7, 64)[0][1]
+
+    long_c = ("Careful derivation. SENTINEL_DERIVATION " * 40) + "\nANSWER: C"      # > 800 chars
+    long_none = ("Careful derivation that never commits. " * 40)
+    orig_prompts = dict(D.PERSONA_PROMPTS); orig_expert = D.EXPERT_TMPL
+    orig_critic = SF.REWRITTEN_CRITIC; orig_instr = D.ANSWER_INSTR
+    k_off = SF.path_key([{"personas": ["solver"]}])
+    D._think_mode.clear()
+    D.reset_v2_stats()
+    seen = {"n": 0}
+    try:
+        # off by default
+        cli = FakeClient(long_c, "ANSWER: C")
+        t = run(cli)
+        check(len(cli.calls) == 1 and D.SUMMARY_MARK not in t, "v2 off: one call, no marker")
+        check('"v"' not in k_off, "v2 off: no v marker in the key")
+
+        SF.set_v2(True)
+        D.on_summary = lambda: seen.__setitem__("n", seen["n"] + 1)
+        check(D.ANSWER_INSTR_V2 in D.PERSONA_PROMPTS["solver"]
+              and D.ANSWER_INSTR_V2 in D.PERSONA_PROMPTS["verifier"]
+              and D.ANSWER_INSTR_V2 in SF.REWRITTEN_CRITIC
+              and D.ANSWER_INSTR_V2 in D.EXPERT_TMPL.format(field="X"),
+              "v2 on: persona, critic and expert prompts carry the careful-reasoning text")
+        k_on = SF.path_key([{"personas": ["solver"]}])
+        check(k_on.endswith(',"v":"2"}') and k_on[:-len(',"v":"2"}')] == k_off[:-1],
+              "v2 marker appended last; the v1 prefix is unchanged", k_on)
+        D.set_commit_followup(True)
+        check(D.commit_signature() is None and '"c"' not in SF.path_key([{"personas": ["solver"]}]),
+              "commit follow-up marker suppressed under v2")
+        D.set_commit_followup(False)
+
+        # the normal case: long committed reply + agreeing summary
+        cli = FakeClient(long_c, "Decisive step: X.\nANSWER: C")
+        t = run(cli)
+        check(len(cli.calls) == 2 and D.SUMMARY_MARK in t and D.extract_letter(t, 4) == "C",
+              "two calls, marker present, letter kept", D.extract_letter(t, 4))
+        c2 = cli.calls[1]
+        check(c2["max_tokens"] == D.SUMMARY_MAX_TOKENS and len(c2["messages"]) == 4
+              and c2["messages"][2]["content"] == long_c
+              and c2["messages"][3]["content"] == D.SUMMARY_NUDGE,
+              "summary call: short budget, 4 messages, full reply as the assistant turn")
+        check(seen["n"] == 1 and D.V2_STATS["summaries"] == 1, "summary hook and counter fired")
+
+        # disagreement: the full reply's letter wins and the summary's last line says so
+        cli = FakeClient(long_c, "I now think B.\nANSWER: B")
+        t = run(cli)
+        full, summ = D._split_summary(t)
+        check(D.extract_letter(t, 4) == "C" and D.extract_letter(summ, 4) == "C"
+              and D.V2_STATS["disagreements"] == 1,
+              "disagreement: full letter wins, summary's ANSWER line rewritten", summ[-30:])
+
+        # recovery: cut-off reply, the summary commits (strict, then lenient)
+        t = run(FakeClient(long_none, "Best supported: B.\nANSWER: B"))
+        check(D.extract_letter(t, 4) == "B" and D.V2_STATS["recovered_commits"] == 1,
+              "recovery: summary's ANSWER line is the commit")
+        t = run(FakeClient(long_none, "So the answer is **B**, given the units."))
+        check(D.extract_letter(t, 4) == "B" and t.endswith("ANSWER: B")
+              and D.V2_STATS["recovered_commits"] == 2,
+              "recovery: prose commit normalized to an ANSWER line", t[-40:])
+
+        # failure: summary call raises, or returns nothing -> full text only
+        cli = FakeClient(long_c, RuntimeError("server hiccup"))
+        t = run(cli)
+        check(t == long_c and D.V2_STATS["failed_summaries"] == 1,
+              "summary exception: full reply stored, nothing raised")
+        t = run(FakeClient(long_c, ""))
+        check(t == long_c and D.V2_STATS["failed_summaries"] == 2, "empty summary: full reply stored")
+
+        # short committed reply: no summary call
+        cli = FakeClient("Short.\nANSWER: A", "ANSWER: A")
+        t = run(cli)
+        check(len(cli.calls) == 1 and D.SUMMARY_MARK not in t and D.V2_STATS["skipped_short"] == 1,
+              "short committed reply is its own summary")
+
+        # what later speakers see
+        D.set_digest(300, 900)
+        try:
+            rounds = [[("solver", long_c + D.SUMMARY_MARK + "Key fact: Y.\nANSWER: C")]]
+            shown = D._visible(rounds, "all", 4)
+            check("Key fact: Y." in shown and "SENTINEL_DERIVATION" not in shown,
+                  "digest shows the summary, not the derivation")
+            nl = D._visible(rounds, "no_letters", 4)
+            check("Key fact: Y." in nl and "ANSWER" not in nl.upper().replace("PRIOR REASONING", "")
+                  and "SENTINEL_DERIVATION" not in nl,
+                  "no_letters shows the summary without the commitment", nl)
+            check(D._visible(rounds, "letters_only", 4) == "Prior committed answers: C x1",
+                  "letters_only unchanged")
+        finally:
+            D.set_digest(700, 0)
+
+        # through the runner: counts, charging, and a well-formed record on disk
+        D.execute_round = REAL_EXECUTE_ROUND
+        try:
+            rows = {"q1": {"id": "q1", "question": "Q?", "options": opts, "answer_letter": "C"}}
+            runner = SF.RoundRunner(rows, base_urls="http://127.0.0.1:1/v1", model="stub",
+                                    temperature=0.7, answer_tokens=64,
+                                    cache_path=TMP / "v2_cache.jsonl", progress=False)
+            cli = FakeClient(long_c, "Because Z.\nANSWER: C")
+            runner._client = lambda: cli
+            out = runner.run_round("q1", [], [], {"personas": ["solver", "solver"]}, rep=0)
+            check(runner.summaries == 2 and runner.calls == 4 and len(out) == 2,
+                  "runner: 2 summaries, 4 calls charged", (runner.summaries, runner.calls))
+            rec = json.loads((TMP / "v2_cache.jsonl").read_text().splitlines()[-1])
+            check(M.well_formed(rec) and all(D.SUMMARY_MARK in t for _, t in rec["responses"])
+                  and '"v":"2"' in rec["k"], "runner: record well-formed, marked, keyed v2")
+            runner.close()
+        finally:
+            D.execute_round = stub_execute_round
+    finally:
+        SF.set_v2(False)
+        D.set_commit_followup(False)
+        D.on_summary = None
+        D.reset_v2_stats()
+    check(D.PERSONA_PROMPTS == orig_prompts and D.EXPERT_TMPL == orig_expert
+          and SF.REWRITTEN_CRITIC == orig_critic and D.ANSWER_INSTR == orig_instr
+          and SF.path_key([{"personas": ["solver"]}]) == k_off,
+          "v2 off again: prompts, critic and key restored")
 
 
 if __name__ == "__main__":
@@ -310,6 +550,8 @@ if __name__ == "__main__":
     test_torn_records_are_skipped()
     test_digest_window_and_cache_key()
     test_no_eliminator()
+    test_vote_read_and_commit_followup()
+    test_v2_summary_mode()
     test_call_cap_and_round_kinds()
     test_eval_merge()
     test_evolve_live_end_to_end()

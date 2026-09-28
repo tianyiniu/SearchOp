@@ -336,14 +336,43 @@ def race(schemas: list[dict], ev: Evaluator, stages: tuple[int, ...] = (64, 256,
 # The rewritten critic prompt evolved by E7 (outputs/evolve_persona_text_summary.json,
 # individual i019, 16.7% on 192 train questions at 8 calls) -- the project's best
 # production-legal critic. Unlike the contrarian it is ALLOWED to keep the answer.
-REWRITTEN_CRITIC = (
+_CRITIC_BODY = (
     "You are a Critic. Your job is to challenge the leading answer, not to restate it. "
     "Check for hidden flaws: misapplied rules, unstated assumptions, overlooked "
     "constraints, or an option that better fits the question. Be concise but explicit "
     "about why the leading answer may be wrong and what alternative is better supported. "
-    "If you find a real flaw, change the answer; otherwise keep it. Reason step by step, "
-    "then end with exactly one line: 'ANSWER: <letter>'. Always choose exactly one "
-    "letter; never abstain.")
+    "If you find a real flaw, change the answer; otherwise keep it. ")
+REWRITTEN_CRITIC_V1 = (_CRITIC_BODY + "Reason step by step, then end with exactly one "
+                       "line: 'ANSWER: <letter>'. Always choose exactly one letter; never abstain.")
+# v2: the same critic, with the careful-reasoning instruction the other personas get.
+REWRITTEN_CRITIC_V2 = (_CRITIC_BODY + D.ANSWER_INSTR_V2
+                       + " Always choose exactly one letter; never abstain.")
+REWRITTEN_CRITIC = REWRITTEN_CRITIC_V1
+
+
+def set_v2(on: bool) -> None:
+    """Switch the whole executor to v2 (careful-reasoning prompts, long replies,
+    summary follow-up) or back. Entry scripts call THIS, not D.set_v2, so the
+    per-question critic override changes with the persona prompts. (debate_mcq
+    cannot import this module, so the critic text is switched here.)"""
+    D.set_v2(on)
+    _rebuild_critic()
+
+
+def _rebuild_critic() -> None:
+    """The per-question critic override from debate_mcq's current switches.
+    With visible reasoning off this is exactly what set_v2 always chose."""
+    global REWRITTEN_CRITIC
+    REWRITTEN_CRITIC = REWRITTEN_CRITIC_V2 if D.V2 else REWRITTEN_CRITIC_V1
+    if D.VISIBLE_REASONING:
+        REWRITTEN_CRITIC = REWRITTEN_CRITIC + D.VISIBLE_SENTENCE
+
+
+def set_visible_reasoning(on: bool) -> None:
+    """Ask every persona to put its reasoning in the visible reply (for
+    models that think in a hidden channel). Off by default; see debate_mcq."""
+    D.set_visible_reasoning(on)
+    _rebuild_critic()
 
 
 def committed_letters(all_rounds: list[list[tuple[str, str]]], n: int) -> list[str]:
@@ -379,6 +408,22 @@ def path_key(rounds: list[dict], prompts: dict | None = None) -> str:
     # only when non-default, so every existing recording keeps its key.
     if (sig := D.digest_signature()) is not None:
         key["d"] = list(sig)
+    # Same for the commit follow-up: a reply that was nudged to commit is a
+    # different recording from one that was left truncated.
+    if (c := D.commit_signature()) is not None:
+        key["c"] = c
+    # v2 recordings (careful-reasoning prompts, long replies, summary appended)
+    # are a different run from v1 ones. Appended last so v1 keys are unchanged.
+    if (v := D.v2_signature()) is not None:
+        key["v"] = v
+    # Visible reasoning changes every prompt. Appended last, and only when on,
+    # so every existing key is unchanged.
+    if (g := D.visible_signature()) is not None:
+        key["g"] = g
+    # The summary is what later speakers read, so its length limit changes what
+    # they saw. Appended last, and only when not the original 120 words.
+    if (w := D.summary_signature()) is not None:
+        key["s"] = w
     return json.dumps(key, sort_keys=False, separators=(",", ":"))
 
 
@@ -406,6 +451,8 @@ class RoundRunner:
         self.calls = 0
         self.rounds_run = 0
         self.errors = 0
+        self.followups = 0
+        self.summaries = 0
         self._lock = threading.Lock()
         self._cache: dict[tuple, list] = {}
         self.cache_path = Path(cache_path)
@@ -431,6 +478,35 @@ class RoundRunner:
         # progress lives in the stage() label; the bar shows calls done and rate.
         self._bar = tqdm(total=None, unit="call", desc="starting", dynamic_ncols=True,
                          smoothing=0.02, miniters=1) if progress else None
+        # the commit follow-up and the v2 summary are extra (short) model calls;
+        # count and charge them
+        D.on_followup = self._count_followup
+        D.on_summary = self._count_summary
+
+    def _postfix(self) -> None:
+        """One place for the bar's extra fields, so setting one never drops another."""
+        if self._bar is None:
+            return
+        extra = {}
+        if self.errors:
+            extra["err"] = self.errors
+        if self.followups:
+            extra["followups"] = self.followups
+        if self.summaries:
+            extra["summaries"] = self.summaries
+        self._bar.set_postfix(**extra, refresh=False)
+
+    def _count_followup(self) -> None:
+        with self._lock:
+            self.followups += 1
+        self.charge(1)
+        self._postfix()
+
+    def _count_summary(self) -> None:
+        with self._lock:
+            self.summaries += 1
+        self.charge(1)
+        self._postfix()
 
     def stage(self, label: str) -> None:
         if self._bar is not None:
@@ -475,6 +551,8 @@ class RoundRunner:
                 err = str(exc)
         rec = {"q": qid, "k": key[1], "r": rep,
                "responses": [list(pr) for pr in responses], "error": err}
+        if not err and (usage := D.last_round_usage()):
+            rec["usage"] = usage              # tokens per speaker; for reporting only, never read back
         with self._lock:
             self.rounds_run += 1
             if err:
@@ -483,8 +561,7 @@ class RoundRunner:
                 self._cache[key] = rec["responses"]
             self._fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
             self._fh.flush()
-            if self._bar is not None and self.errors:
-                self._bar.set_postfix(err=self.errors, refresh=False)
+        self._postfix()
         return responses
 
     def close(self) -> None:

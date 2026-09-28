@@ -1,0 +1,348 @@
+"""Step 7: the routed programs on the dev questions.
+
+Two sets of per-group programs are compared, each routed the same way:
+
+    held-out champions        the program picked per group on the held-out
+                              training questions (champions.json)
+    strongest grid programs   the slot-A holder of each group, picked on the
+                              search questions alone (summary.json)
+
+Both sets, the global champion and the literature baselines are run on EVERY
+dev question, so any routing rule is scored from the saved marks without
+another model call. The rows:
+
+    routed, <set>             each question answered by the program of its group
+                              (nearest medoid, from route_questions.py)
+    ..., knn / question route the champions with the two comparison routes
+    unsure -> global          the routed champion, except that the questions with
+                              the smallest margin between their nearest two medoids
+                              go to the global champion (lowest quarter, lowest half)
+    random group, <set>       the mean over the set: what routing to a group drawn
+                              at random would score
+    global champion           one program for every question
+    baselines                 direct, mad, self_refine (program_space.PROTOCOLS)
+    best of <set> (bound)     per question, the best program of the set: the most
+                              any router over it could reach (it also collects
+                              luck, so read it as a loose upper bound)
+
+Replicates are run one after another: every program on every question at
+replicate 1, then the tables (results_k1), then replicate 2 (results_k2), and
+so on. Each table has avg@1 (first replicate only), avg@n, pass@n (any
+replicate right) and speaker turns. Differences come with a paired standard
+error over questions.
+
+    python scripts/eval_routed_dev.py --run outputs/cluster_search_gptoss_v3/run1 \\
+        --routes outputs/routes_dev_small.json --model openai/gpt-oss-20b \\
+        --base-urls http://localhost:7472/v1 --temperature 1.0 --visible-reasoning
+
+The executor settings must equal those of the search (they are read from the
+archive header and checked). Dev debates are recorded in their own round cache
+in the output directory; running the script again costs nothing.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import evolve_program_clusters_v3 as V3  # noqa: E402
+import program_space as P  # noqa: E402
+import schema_fitness as SF  # noqa: E402
+from program_space import ProgRecord  # noqa: E402
+
+ROOT = P.ROOT
+log = V3.log
+
+
+def mean_se(xs: list[float]) -> tuple[float, float]:
+    n = len(xs)
+    m = sum(xs) / n
+    return m, (math.sqrt(sum((x - m) ** 2 for x in xs) / (n - 1) / n) if n > 1 else 0.0)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--run", type=Path, required=True,
+                    help="search run directory (champions.json, summary.json and archive.jsonl are read; "
+                         "only <run>/dev_eval is written)")
+    ap.add_argument("--routes", type=Path, default=ROOT / "outputs/routes_dev_small.json")
+    ap.add_argument("--dataset", type=Path, default=ROOT / "datasets/supergpqa_program_search_dev_small.json")
+    ap.add_argument("--out", type=Path, default=None, help="default: <run>/dev_eval")
+    ap.add_argument("--reps", type=int, default=3,
+                    help="replicates, run one after another with the tables written after each")
+    ap.add_argument("--baselines", default="direct,mad,self_refine")
+    ap.add_argument("--max-calls-per-question", type=int, default=16)
+    ap.add_argument("--no-live", action="store_true", help="cache only: score what is already recorded")
+    ap.add_argument("--external", default="",
+                    help="independently run baselines to show beside ours, as label=path pairs separated by "
+                         "commas; each path is a score file written by baselines/score.py --save (its "
+                         "per-question predictions are read). These are the baselines to report: they run "
+                         "with the model's full thinking budget, outside this executor.")
+    ap.add_argument("--no-champions", action="store_true",
+                    help="champions.json is not read (the champion step was skipped): only the strongest grid "
+                         "programs are routed, and the one-program-for-everyone row is the program with the best "
+                         "score over all search questions (summary.json, top_overall)")
+    live = ap.add_argument_group("debate model")
+    live.add_argument("--base-urls", default=P.DEFAULT_BASE_URLS)
+    live.add_argument("--model", default=P.DEFAULT_MODEL)
+    live.add_argument("--api-key", default="EMPTY")
+    live.add_argument("--temperature", type=float, default=0.7)
+    live.add_argument("--workers", type=int, default=64)
+    live.add_argument("--live-cache", type=Path, default=None,
+                      help="round cache for the dev debates (default <out>/rounds_<model>.jsonl)")
+    live.add_argument("--max-total-calls", type=int, default=200_000)
+    live.add_argument("--ignore-cache-lock", action="store_true")
+    ap.add_argument("--digest-head", type=int, default=P.DIGEST_HEAD)
+    ap.add_argument("--digest-tail", type=int, default=P.DIGEST_TAIL)
+    ap.add_argument("--visible-reasoning", action="store_true")
+    P.add_executor_args(ap)
+    args = ap.parse_args()
+
+    settings = P.configure_executor(args.digest_head, args.digest_tail, args.visible_reasoning,
+                                    deep_think=args.deep_think, summary_words=args.summary_words)
+    settings["model"] = args.model
+    with (args.run / "archive.jsonl").open() as f:
+        header = json.loads(f.readline())
+    if header.get("settings") != settings:
+        raise SystemExit(f"the search ran with {header.get('settings')}, this run asks for {settings}")
+
+    champs = None if args.no_champions else json.loads((args.run / "champions.json").read_text())
+    routed = json.loads(args.routes.read_text())
+    if Path(routed["clusters"]).resolve() != Path(header["clusters"]).resolve():
+        raise SystemExit(f"the routes were made for {routed['clusters']}, the search used {header['clusters']}")
+    routes = routed["routes"]
+    rows = {r["id"]: r for r in json.loads(args.dataset.read_text())}
+    qids = [q for q in rows if q in routes]
+    if len(qids) < len(rows):
+        log(f"note: {len(rows) - len(qids)} dev questions have no route (no description) and are left out")
+    if set(qids) & set(header["qids"]):
+        raise SystemExit("some dev questions were search questions")
+
+    # the programs, one record per distinct program however many roles it has
+    records: dict[str, ProgRecord] = {}
+    role: dict[str, str] = {}                      # role name -> program key
+
+    def enrol(name: str, program: dict) -> None:
+        prog = P.normalize_program(program)
+        P.validate_program(prog)
+        key = P.canon(prog)
+        records.setdefault(key, ProgRecord(prog, name, name, 0))
+        role[name] = key
+
+    # the strongest grid program of each group: its slot-A holder, as the search left it
+    summary = json.loads((args.run / "summary.json").read_text())
+    slot_a = {int(x["group"]): x for x in summary["slots"] if x["slot"] == "A"}
+    groups = sorted(slot_a) if champs is None else sorted(int(g) for g in champs["per_group"])
+    if sorted(slot_a) != groups:
+        raise SystemExit(f"{args.run / 'summary.json'} names slot-A holders for {sorted(slot_a)}, not {groups}")
+    # the sets of per-group programs that are routed; the first is the main one
+    sets: list[tuple[str, str]] = []
+    if champs is not None:
+        sets.append(("champion", "held-out champions"))
+        for g in groups:
+            d = champs["per_group"][str(g)]
+            enrol(f"champion_{g}", next(p["program"] for p in d["programs"] if p["key"] == d["champion"]))
+    sets.append(("grid", "strongest grid programs"))
+    for g in groups:
+        enrol(f"grid_{g}", json.loads(slot_a[g]["key"]))
+    if champs is not None:
+        global_label = "global champion"
+        enrol("global", next(p["program"] for p in champs["global"]["programs"]
+                             if p["key"] == champs["global"]["champion"]))
+    else:
+        global_label = "best overall program on the search questions"
+        enrol("global", summary["top_overall"][0]["program"])
+    baselines = [b for b in args.baselines.split(",") if b]
+    for b in baselines:
+        enrol(b, P.PROTOCOLS[b])
+    # independently run baselines: per question, the list of right/wrong marks of their runs
+    external: dict[str, dict[str, list[int]]] = {}
+    for pair in [x for x in args.external.split(",") if x]:
+        label, path = pair.split("=", 1)
+        per_q = json.loads(Path(path).read_text())["per_question"]
+        lacking = [q for q in qids if q not in per_q]
+        if lacking:
+            raise SystemExit(f"--external {label}: {len(lacking)} dev questions are not in {path}")
+        external[label] = {q: [int(p == per_q[q]["answer"]) for p in per_q[q]["preds"]] for q in qids}
+    log(f"{len(qids)} dev questions; {len(role)} roles, {len(records)} distinct programs; "
+        f"{args.reps} replicates; settings {settings}")
+
+    out_dir = args.out or args.run / "dev_eval"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if args.live_cache is None:
+        args.live_cache = out_dir / f"rounds_{P.model_tag(args.model)}.jsonl"
+    runner = P.make_runner(rows, args.live_cache, args.base_urls, args.model, args.temperature,
+                           max_total_calls=args.max_total_calls, api_key=args.api_key,
+                           lock=not args.ignore_cache_lock)
+    shim = SimpleNamespace(runner=runner, rows=rows, args=args)     # what Search.run_jobs/replay read
+    ctx = SimpleNamespace(args=args, settings=settings, records=records, role=role, routes=routes,
+                          qids=qids, groups=groups, baselines=baselines, out_dir=out_dir,
+                          sets=sets, global_label=global_label, external=external)
+    # one replicate at a time, every program on every question, and the tables
+    # after each: the first-replicate numbers are out after a third of the work
+    try:
+        for rep in range(args.reps):
+            for rec in records.values():
+                V3.Search.replay(shim, rec, qids, rep)
+            if not args.no_live:
+                spent = V3.Search.run_jobs(shim, [(rec, q, rep) for rec in records.values() for q in qids],
+                                           f"dev, replicate {rep + 1} of {args.reps}")
+                log(f"replicate {rep + 1}: {spent} speaker turns spent")
+            write_report(ctx, list(range(rep + 1)))
+    except SF.BudgetExhausted as exc:
+        log(f"stopped: {exc}")
+    except KeyboardInterrupt:
+        log("interrupted; what was recorded is kept, run again to finish")
+        raise SystemExit(1)
+    finally:
+        runner.close()
+
+
+def write_report(ctx: SimpleNamespace, reps: list[int]) -> None:
+    """The tables over the replicates in `reps` -> results_k<n>.json / .md."""
+    args, records, role, routes, qids, groups, baselines = (ctx.args, ctx.records, ctx.role, ctx.routes,
+                                                            ctx.qids, ctx.groups, ctx.baselines)
+    n = len(reps)
+    missing = {name: sum(len(records[k].gaps(qids, rep)) for rep in reps) for name, k in role.items()}
+    if any(missing.values()):
+        log(f"debates missing (counted as wrong): { {a: m for a, m in missing.items() if m} }")
+
+    def marks(name: str, q: str) -> list[int]:
+        rec = records[role[name]]
+        return [rec.reps.get(rep, {}).get(q, [0])[0] for rep in reps]
+
+    def turns(name: str, q: str) -> float:
+        rec = records[role[name]]
+        vals = [rec.reps[rep][q][1] for rep in reps if q in rec.reps.get(rep, {})]
+        return sum(vals) / len(vals) if vals else 0.0
+
+    # a row is, per question, a list of (weight, program) choices; one choice for
+    # most rows, all group programs at equal weight for the random-group rows
+    def routed_by(prefix: str, field: str, fallback: set[str] = frozenset()) -> list[list[tuple[float, str]]]:
+        return [[(1.0, "global" if q in fallback else f"{prefix}_{routes[q][field]}")] for q in qids]
+
+    def spread(prefix: str) -> list[list[tuple[float, str]]]:
+        return [[(1.0 / len(groups), f"{prefix}_{g}") for g in groups] for _ in qids]
+
+    sets, global_label = ctx.sets, ctx.global_label
+    main_prefix, main_label = sets[0]                    # the knn / question / unsure rows use this set
+    by_margin = sorted(qids, key=lambda q: routes[q]["margin"])
+    rows_: list[tuple[str, list]] = [(f"routed, {label}", routed_by(prefix, "group")) for prefix, label in sets]
+    rows_ += [(f"routed, {main_label}, knn route", routed_by(main_prefix, "knn")),
+              (f"routed, {main_label}, question route", routed_by(main_prefix, "question"))]
+    for frac, label in ((0.25, "quarter"), (0.5, "half")):
+        rows_.append((f"unsure {label} -> global",
+                      routed_by(main_prefix, "group", set(by_margin[: int(frac * len(qids))]))))
+    rows_ += [(f"random group, {label} (expected)", spread(prefix)) for prefix, label in sets]
+    rows_ += [(global_label, [[(1.0, "global")] for _ in qids])]
+    rows_ += [(f"in-executor {b}", [[(1.0, b)] for _ in qids]) for b in baselines]
+
+    table, per_q = {}, {}
+    for name, choice in rows_:
+        first = [sum(w * marks(p, q)[0] for w, p in c) for c, q in zip(choice, qids)]
+        avg = [sum(w * sum(marks(p, q)) / n for w, p in c) for c, q in zip(choice, qids)]
+        anyc = [sum(w * max(marks(p, q)) for w, p in c) for c, q in zip(choice, qids)]
+        t = [sum(w * turns(p, q) for w, p in c) for c, q in zip(choice, qids)]
+        per_q[name] = avg
+        table[name] = {"avg@1": mean_se(first)[0], f"avg@{n}": mean_se(avg)[0], "se": mean_se(avg)[1],
+                       f"pass@{n}": mean_se(anyc)[0], "turns": sum(t) / len(t)}
+    # independently run baselines: their first n runs (fewer if they have fewer)
+    for label, per in ctx.external.items():
+        runs = [per[q][:n] for q in qids]
+        avg = [sum(r) / len(r) for r in runs]
+        per_q[f"external {label}"] = avg
+        table[f"external {label}"] = {"avg@1": mean_se([r[0] for r in runs])[0], f"avg@{n}": mean_se(avg)[0],
+                                      "se": mean_se(avg)[1], f"pass@{n}": mean_se([max(r) for r in runs])[0],
+                                      "turns": float("nan"), "runs": min(len(r) for r in runs)}
+    for prefix, label in sets:
+        avg = [max(sum(marks(f"{prefix}_{g}", q)) / n for g in groups) for q in qids]
+        per_q[f"best of {label} (bound)"] = avg
+        table[f"best of {label} (bound)"] = {
+            "avg@1": mean_se([max(marks(f"{prefix}_{g}", q)[0] for g in groups) for q in qids])[0],
+            f"avg@{n}": mean_se(avg)[0], "se": mean_se(avg)[1],
+            f"pass@{n}": mean_se([max(max(marks(f"{prefix}_{g}", q)) for g in groups) for q in qids])[0],
+            "turns": sum(sum(turns(f"{prefix}_{g}", q) for g in groups) for q in qids) / len(qids)}
+
+    report = [f"# Dev results: {args.model}, {len(qids)} questions, replicates 1..{n} of {args.reps}", "",
+              f"avg@1 uses the first replicate only. avg@{n} is the mean over questions of each question's "
+              f"mean mark over {n} replicate(s); ± is its standard error over questions. pass@{n} counts a "
+              f"question as right if any replicate was. Turns are speaker turns per question (for a bound: "
+              f"the cost of running all six programs).", "",
+              ("'Held-out champions' are the programs picked per group on the held-out training questions; "
+               if len(sets) > 1 else "The champion step was skipped for this run, so no held-out champions. ")
+              + "'Strongest grid programs' are the slot-A holders, picked on the search questions alone. "
+              + f"'{global_label}' is one program used for every question. 'External' rows are the "
+              "independently run baselines (full thinking budget, their own scorer): these are the baselines "
+              "to report. 'In-executor' rows are the same protocols run as debate programs under this "
+              "executor's settings; they show what the executor costs, not what the baseline can do.", "",
+              "| row | avg@1 | " + (f"avg@{n} | " if n > 1 else "") + f"± | pass@{n} | turns |",
+              "|---|---|---|---|---|" + ("---|" if n > 1 else "")]
+    for name, d in table.items():
+        report.append(f"| {name} | {d['avg@1']:.1%} | " + (f"{d[f'avg@{n}']:.1%} | " if n > 1 else "")
+                      + f"{d['se']:.1%} | {d[f'pass@{n}']:.1%} | "
+                      + ("-" if d["turns"] != d["turns"] else f"{d['turns']:.1f}") + " |")
+
+    # the baseline to beat: the best independently run one if any were given, else the best in-executor one
+    pool_b = [f"external {x}" for x in ctx.external] or [f"in-executor {b}" for b in baselines]
+    best_b = max(pool_b, key=lambda k: table[k][f"avg@{n}"]) if pool_b else None
+    diffs = {}
+    report += ["", f"Differences in avg@{n}, with a paired standard error over questions:", "",
+               "| row | minus | difference | paired ± | question |", "|---|---|---|---|---|"]
+    for main, rand in [(f"routed, {label}", f"random group, {label} (expected)") for _, label in sets]:
+        against = [(rand, "is the routing itself worth anything"),
+                   (global_label, "are per-group programs worth anything")]
+        if best_b:
+            against.append((best_b, "is the search worth anything (best baseline, picked on these questions)"))
+        for other, why in against:
+            diff, se = V3.paired_se(per_q[main], per_q[other])
+            diffs[f"{main} - {other}"] = {"diff": diff, "se": se}
+            report.append(f"| {main} | {other} | {diff:+.1%} | {se:.1%} | {why} |")
+    if len(sets) > 1:
+        diff, se = V3.paired_se(per_q["routed, held-out champions"], per_q["routed, strongest grid programs"])
+        diffs["held-out champions - strongest grid programs"] = {"diff": diff, "se": se}
+        report.append(f"| routed, held-out champions | routed, strongest grid programs | {diff:+.1%} | {se:.1%} | "
+                      f"does picking on held-out questions help |")
+
+    report += ["", f"avg@{n} by the group the question was routed to (nearest medoid):", "",
+               "| group | questions | " + " | ".join(f"its own, {label} | other groups', {label} (mean)"
+                                                      for _, label in sets)
+               + " | global | " + " | ".join(baselines) + " |",
+               "|---|---|" + "---|---|" * len(sets) + "---|" + "---|" * len(baselines)]
+    per_group = {}
+
+    def acc(name: str, qs: list[str]) -> float:
+        return sum(sum(marks(name, q)) / n for q in qs) / len(qs)
+
+    for g in groups:
+        qs = [q for q in qids if routes[q]["group"] == g]
+        if not qs:
+            continue
+        others = [h for h in groups if h != g]
+        d = {"n": len(qs), "global": acc("global", qs), "baselines": {b: acc(b, qs) for b in baselines}}
+        for prefix, _ in sets:
+            d[prefix] = acc(f"{prefix}_{g}", qs)
+            d[f"other_{prefix}"] = sum(acc(f"{prefix}_{h}", qs) for h in others) / max(len(others), 1)
+        per_group[str(g)] = d
+        report.append(f"| {g} | {len(qs)} | " + " | ".join(f"{d[prefix]:.1%} | {d['other_' + prefix]:.1%}"
+                                                          for prefix, _ in sets)
+                      + f" | {d['global']:.1%} | " + " | ".join(f"{d['baselines'][b]:.1%}" for b in baselines) + " |")
+
+    result = {"model": args.model, "settings": ctx.settings, "run": str(args.run), "routes": str(args.routes),
+              "n_questions": len(qids), "reps": n, "reps_planned": args.reps, "table": table,
+              "differences": diffs, "per_group": per_group, "missing": missing, "roles": role,
+              "programs": {k: {"name": r.name, "program": r.program,
+                               "reps": {str(rep): r.reps.get(rep, {}) for rep in reps}}
+                           for k, r in records.items()}}
+    (ctx.out_dir / f"results_k{n}.json").write_text(json.dumps(result, indent=1))
+    (ctx.out_dir / f"results_k{n}.md").write_text("\n".join(report) + "\n")
+    log("\n".join(report))
+    log(f"\n-> {ctx.out_dir / f'results_k{n}.json'}, {ctx.out_dir / f'results_k{n}.md'}\n")
+
+if __name__ == "__main__":
+    main()

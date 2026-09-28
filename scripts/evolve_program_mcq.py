@@ -99,7 +99,15 @@ ACTIONS: dict[str, list[dict]] = {
 # window. --no-eliminator drops these moves and swaps in eliminator-free seeds.
 ELIMINATOR_ACTIONS = ("eliminate", "elim_blind")
 
-STOP_READS = ("last_commit", "last_speaker")
+# How a stop reads the answer off the transcript:
+#   last_commit   the most recent committed letter
+#   last_speaker  the last round's letter under debate_mcq.final_letter("last")
+#   vote          plurality over EVERY committed letter in the transcript (ties go
+#                 to the letter committed first). On the 27B dev transcripts this
+#                 beat last_commit by 1.3 points at no extra cost: the personas
+#                 flip answers at chance precision, so the last word is no better
+#                 than any other word, and counting all of them averages the noise.
+STOP_READS = ("last_commit", "last_speaker", "vote")
 
 
 # --- observable state and conditions ----------------------------------------
@@ -404,8 +412,8 @@ def run_program(prog: dict, runner, row: dict, rep: int = 0,
             act = prog["default"]              # nothing left to continue: stop
         if not act.startswith("stop:") and max_calls is not None:
             todo = [plan[st.plan_pos]] if act == "continue" else ACTIONS[act]
-            spent = sum(len(s["personas"]) for s in specs)
-            if spent + sum(len(s["personas"]) for s in todo) > max_calls:
+            spent = sum(D.turn_cost(s["personas"]) for s in specs)
+            if spent + sum(D.turn_cost(s["personas"]) for s in todo) > max_calls:
                 act = prog["default"]          # over the per-question cap: stop
         if act.startswith("stop:"):
             read = act[5:]
@@ -418,6 +426,9 @@ def run_program(prog: dict, runner, row: dict, rep: int = 0,
 
     if read == "last_speaker":
         final = D.final_letter("last", rounds, n) if rounds else None
+    elif read == "vote":
+        letters = SF.committed_letters(rounds, n)
+        final = Counter(letters).most_common(1)[0][0] if letters else None
     else:                                                  # "last_commit"
         letters = SF.committed_letters(rounds, n)
         final = letters[-1] if letters else None
@@ -425,7 +436,7 @@ def run_program(prog: dict, runner, row: dict, rep: int = 0,
     return {"qid": qid, "letter": final,
             "correct": final is not None and final == gold,
             "actions": actions,
-            "n_calls": sum(len(s["personas"]) for s in specs)}
+            "n_calls": sum(D.turn_cost(s["personas"]) for s in specs)}
 
 
 # --- experiment B and the fixed recipe, expressed as programs ---------------
@@ -483,11 +494,37 @@ PROGRAM_B_NOELIM = {
 }
 
 
+def with_vote_read(prog: dict) -> dict:
+    """The same program with every stop reading the plurality of all commits."""
+    p = json.loads(json.dumps(prog))
+    for rule in p["rules"]:
+        if rule["do"].startswith("stop:"):
+            rule["do"] = "stop:vote"
+    p["default"] = "stop:vote"
+    return p
+
+
+PROGRAM_B_VOTE = with_vote_read(PROGRAM_B)
+PROGRAM_B_NOELIM_VOTE = with_vote_read(PROGRAM_B_NOELIM)
+PROGRAM_FIXED_VOTE = with_vote_read(PROGRAM_FIXED)
+
+
 def drop_eliminator() -> None:
     """Remove the eliminator moves from the action menu for this process. Any
     seed or mutation that used them is rebuilt without them."""
     for name in ELIMINATOR_ACTIONS:
         ACTIONS.pop(name, None)
+    global ROUND_KINDS
+    ROUND_KINDS = sorted({round_kind(s) for specs in ACTIONS.values() for s in specs}
+                         | {round_kind(s) for s in B.MASTER_ROUNDS})
+
+
+def add_deep_think() -> None:
+    """Add the deep-think move to the action menu for this process (see
+    debate_mcq: one speaker with the model's highest reasoning setting and no
+    reply cap; one such turn counts as debate_mcq.DEEP_COST turns). Use
+    program_space.configure_executor, which also switches the persona on."""
+    ACTIONS[D.DEEP_PERSONA] = [{"personas": [D.DEEP_PERSONA], "sees": "all"}]
     global ROUND_KINDS
     ROUND_KINDS = sorted({round_kind(s) for specs in ACTIONS.values() for s in specs}
                          | {round_kind(s) for s in B.MASTER_ROUNDS})
@@ -592,12 +629,13 @@ def random_condition(rng: random.Random) -> str:
 
 
 def random_action(rng: random.Random) -> str:
-    acts = ["continue", "stop:last_commit", "stop:last_speaker"] + list(ACTIONS)
+    acts = ["continue", "stop:last_commit", "stop:last_speaker", "stop:vote"] + list(ACTIONS)
     return rng.choice(acts)
 
 
 def mutate_program(prog: dict, rng: random.Random, rand_cond=None, rand_act=None,
-                   defaults: tuple[str, ...] = ("stop:last_commit", "stop:last_speaker"),
+                   defaults: tuple[str, ...] = ("stop:last_commit", "stop:last_speaker",
+                                                "stop:vote"),
                    ) -> dict:
     """One random edit. The condition/action generators are parameters so the
     FRAMES search programs (evolve_program_frames.py) can reuse this with their
@@ -695,9 +733,11 @@ def eval_program(prog: dict, runner, rows: dict, qids: list[str], rep: int,
 
     if workers > 1 and len(idx) > 1:
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            results = list(pool.map(one, idx))
+            results = list(tqdm(pool.map(one, idx), total=len(idx), unit="q",
+                                desc="questions", leave=False, disable=len(idx) < 50))
     else:
-        results = [one(i) for i in idx]
+        results = [one(i) for i in tqdm(idx, unit="q", desc="questions", leave=False,
+                                        disable=len(idx) < 50)]
     for i, out in results:
         if out is not None:
             ev.record(i, out)
@@ -755,9 +795,12 @@ def evolve(args) -> None:
             read_only.append(args.live_cache)
         runner = CacheRunner(read_only)
 
-    seeds = {"program_b": PROGRAM_B, "program_fixed": PROGRAM_FIXED, **PROBES}
+    seeds = {"program_b": PROGRAM_B, "program_b_vote": PROGRAM_B_VOTE,
+             "program_fixed": PROGRAM_FIXED, "program_fixed_vote": PROGRAM_FIXED_VOTE,
+             **PROBES}
     if getattr(args, "no_eliminator", False):
         seeds["program_b"] = PROGRAM_B_NOELIM
+        seeds["program_b_vote"] = PROGRAM_B_NOELIM_VOTE
         seeds = {k: p for k, p in seeds.items()
                  if all(r["do"] in ACTIONS or r["do"] == "continue" or r["do"].startswith("stop:")
                         for r in p["rules"])}
@@ -841,7 +884,9 @@ def evolve(args) -> None:
             population = sorted(population + offspring, key=lambda t: -t[0])[:args.population]
             best_c, best_name, best = population[0]
             ev = scores[canon_prog(best)]
-            live_note = (f", live calls {getattr(runner, 'calls', 0)}" if args.live else "")
+            live_note = (f", live calls {getattr(runner, 'calls', 0)}"
+                         f" (follow-ups {getattr(runner, 'followups', 0)}, "
+                         f"summaries {getattr(runner, 'summaries', 0)})" if args.live else "")
             print(f"gen {gen:>3}: best train {best_c / len(train):.2%} "
                   f"(covered {ev.covered / len(train):.0%}, lineage {best_name}), "
                   f"{len(offspring)} new, {len(scores)} evaluated{live_note}")
@@ -913,8 +958,19 @@ def evolve(args) -> None:
             # The fresh numbers need a fresh comparator, paired on the same
             # replicate, or they cannot be read against anything.
             print(f"\nreference programs on dev, same fresh replicate {args.recheck_rep}:")
-            for name, prog in (("program_b", PROGRAM_B), ("program_fixed", PROGRAM_FIXED),
-                               ("solver_critic", PROBES["solver_critic"])):
+            # Must match the action menu this run is using: with --no-eliminator
+            # the original program_b cannot run at all.
+            noelim = getattr(args, "no_eliminator", False)
+            refs = [("program_b", PROGRAM_B_NOELIM if noelim else PROGRAM_B),
+                    ("program_b_vote", PROGRAM_B_NOELIM_VOTE if noelim else PROGRAM_B_VOTE),
+                    ("program_fixed", PROGRAM_FIXED),
+                    ("solver_critic", PROBES["solver_critic"])]
+            for name, prog in refs:
+                try:
+                    validate_program(prog)
+                except (AssertionError, ValueError) as exc:
+                    print(f"  {name:14} skipped: not runnable under this action menu ({exc})")
+                    continue
                 fresh = fresh_dev(prog)
                 baselines_fresh[name] = {"dev_fresh_acc": fresh.correct / len(recheck_qids),
                                          "dev_fresh_n": len(recheck_qids),
@@ -923,6 +979,12 @@ def evolve(args) -> None:
     except (SF.BudgetExhausted, KeyboardInterrupt) as exc:
         print(f"\nstopped during the final evaluation ({exc!r}) -- "
               f"writing what was completed")
+    except Exception:
+        # Never lose a multi-hour search to a fault in the reporting phase.
+        # Whatever was computed still gets written below.
+        import traceback
+        print("\nERROR during the final evaluation -- writing what was completed:")
+        traceback.print_exc()
 
     if args.save_all:
         base = SF.load_base_letters(args.bestofn_cache) if args.bestofn_cache.exists() else {}
@@ -944,6 +1006,8 @@ def evolve(args) -> None:
         {"n_train": len(train), "n_dev": len(dev), "seed": args.seed,
          "generations": args.generations, "evaluated": len(scores), "live": args.live,
          "live_calls_total": getattr(runner, "calls", 0) if args.live else 0,
+         "v2": getattr(args, "v2", False), "answer_tokens": getattr(args, "answer_tokens", None),
+         "v2_stats": dict(D.V2_STATS) if getattr(args, "v2", False) else None,
          "baselines": {"program_b": 0.1482, "program_fixed": 0.1449},
          "baselines_fresh": baselines_fresh,
          "recheck_qids": recheck_qids if args.live else [],
@@ -1047,6 +1111,16 @@ if __name__ == "__main__":
                          "The committed conclusion sits at ~99%% of the text, so a tail "
                          "is what carries it. Non-default windows change the round cache "
                          "key, so they can never replay 700/0 recordings by mistake.")
+    ap.add_argument("--commit-followup", action="store_true",
+                    help="When a reply commits no letter (usually cut off at the token "
+                         "cap), send one short continuation asking it to commit now. "
+                         "Changes the round cache key, so it never replays recordings "
+                         "made without it.")
+    ap.add_argument("--v2", action="store_true",
+                    help="v2 pipeline: careful-reasoning prompts, 6144-token replies, and a "
+                         "summary follow-up whose text is what later personas read. Changes "
+                         "the round cache key (v=2). Needs a digest tail; replaces "
+                         "--commit-followup.")
     ap.add_argument("--max-calls-per-question", type=int, default=16,
                     help="A program that would exceed this many calls on one question is "
                          "stopped instead (never binds on the hand-written programs).")
@@ -1057,10 +1131,11 @@ if __name__ == "__main__":
     live.add_argument("--live-cache", type=Path, default=Path("outputs/program_live_rounds_cache.jsonl"),
                       help="Where NEW rounds are written. The treegrow/adaptive caches are read-only.")
     live.add_argument("--base-urls", default="http://localhost:7472/v1")
-    live.add_argument("--model", default="Qwen/Qwen3-14B")
+    live.add_argument("--model", default="Qwen/Qwen3.5-35B-A3B-FP8")
     live.add_argument("--api-key", default="EMPTY")
     live.add_argument("--temperature", type=float, default=0.7)
-    live.add_argument("--answer-tokens", type=int, default=3072)
+    live.add_argument("--answer-tokens", type=int, default=None,
+                      help="Output budget per reasoning call (default 3072; 6144 under --v2).")
     live.add_argument("--novelty-budget", type=int, default=300,
                       help="New model calls a candidate may spend filling its off-cache "
                            "questions; beyond this they count as wrong again.")
@@ -1089,12 +1164,25 @@ if __name__ == "__main__":
                       help="Open the live cache even if its lock file exists (only when the "
                            "run that made it is known to be dead).")
     args = ap.parse_args()
+    if args.v2 and args.commit_followup:
+        raise SystemExit("--v2 already commits through its summary call; drop --commit-followup")
+    if args.v2 and args.digest_tail <= 0:
+        raise SystemExit("--v2 needs --digest-tail > 0 (e.g. --digest-head 300 --digest-tail 900)")
+    if args.answer_tokens is None:
+        args.answer_tokens = 6144 if args.v2 else 3072
     if (args.digest_head, args.digest_tail) != (700, 0):
         D.set_digest(args.digest_head, args.digest_tail)
         print(f"digest window: {args.digest_head} head + {args.digest_tail} tail chars "
               f"(non-default: round cache keys differ from the 700/0 recordings)")
     if getattr(args, "no_eliminator", False):
         drop_eliminator()
+    if args.commit_followup:
+        D.set_commit_followup(True)
+        print("commit follow-up ON (round cache keys carry c=1)")
+    if args.v2:
+        SF.set_v2(True)
+        print(f"v2 pipeline ON: careful-reasoning prompts, {args.answer_tokens}-token replies, "
+              f"summary follow-up (round cache keys carry v=2)")
     if args.evolve:
         # A command pasted across two lines silently loses its trailing flags.
         # So: never lose the per-program log in live mode, and show every

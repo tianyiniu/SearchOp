@@ -26,12 +26,17 @@ set -euo pipefail
 cd "$(dirname "$0")"
 touch outputs/empty.jsonl
 
-CACHE=outputs/program_live_rounds_cache_qwen27b.jsonl
-WARMUP_DONE=outputs/warmup_qwen27b.json
+# _v2: recordings made by the v2 pipeline (careful-reasoning prompts, 6144-token
+# replies, a summary call per persona whose text is the debate history). Keyed
+# v=2, so the 14B and earlier 27B recordings can never be mistaken for them.
+# The v2 cache started by run_v2_dev_overnight.sh is reused here as-is.
+CACHE=outputs/program_live_rounds_cache_qwen27b_v2.jsonl
+WARMUP_DONE=outputs/warmup_qwen27b_v2.json
 
 COMMON=(--evolve --live
         --model Qwen/Qwen3.5-27B
         --no-eliminator --digest-head 300 --digest-tail 900
+        --v2
         --min-coverage 0
         --cache outputs/empty.jsonl --treegrow-cache outputs/empty.jsonl
         --live-cache "$CACHE")
@@ -65,10 +70,10 @@ echo "[$(date '+%F %T')] step 2/2: evolution (40 generations)"
 python scripts/evolve_program_mcq.py "${COMMON[@]}" \
   --generations 40 --population 16 --offspring 4 \
   --novelty-budget 300 --recheck-top 3 \
-  --evolved-out outputs/program_mcq_evolved_live_qwen27b.json \
-  --save-all outputs/program_mcq_all_live_qwen27b.jsonl
+  --evolved-out outputs/program_mcq_evolved_live_qwen27b_v2.json \
+  --save-all outputs/program_mcq_all_live_qwen27b_v2.jsonl
 
 echo "[$(date '+%F %T')] done"
-echo "  results:      outputs/program_mcq_evolved_live_qwen27b.json"
-echo "  all programs: outputs/program_mcq_all_live_qwen27b.jsonl"
+echo "  results:      outputs/program_mcq_evolved_live_qwen27b_v2.json"
+echo "  all programs: outputs/program_mcq_all_live_qwen27b_v2.jsonl"
 echo "  round cache:  $CACHE"

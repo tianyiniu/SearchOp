@@ -69,7 +69,14 @@ def main() -> None:
     ap.add_argument("--burst", type=int, default=32, help="Concurrent calls for the throughput test.")
     ap.add_argument("--skip-recordings", action="store_true",
                     help="Do not require the two 14B recordings (a fresh-model run uses empty ones).")
+    ap.add_argument("--v2", action="store_true",
+                    help="Probe the v2 pipeline: careful-reasoning prompts, 6144-token replies and a "
+                         "summary call per persona, so the throughput number matches the overnight run.")
+    ap.add_argument("--answer-tokens", type=int, default=None,
+                    help="max_tokens per reasoning call (default 6144 with --v2, else 3072).")
     args = ap.parse_args()
+    if args.answer_tokens is None:
+        args.answer_tokens = 6144 if args.v2 else 3072
 
     # 1 --------------------------------------------------------------------
     step("1. imports")
@@ -78,6 +85,9 @@ def main() -> None:
         import debate_mcq as D
         import schema_fitness as SF
         import adaptive_debate_mcq as B
+        if args.v2:
+            D.set_digest(300, 900)
+            SF.set_v2(True)
         import evolve_program_mcq as M
     except Exception as exc:
         fail(f"import error: {exc!r}",
@@ -126,7 +136,7 @@ def main() -> None:
     t0 = time.perf_counter()
     try:
         r1 = D.execute_round(client, args.model, row["question"], list(row["options"]),
-                             {"personas": ["solver"]}, [], 0.7, 3072, prompts)
+                             {"personas": ["solver"]}, [], 0.7, args.answer_tokens, prompts)
     except Exception as exc:
         fail(f"solver call failed: {exc!r}")
     dt = time.perf_counter() - t0
@@ -143,7 +153,7 @@ def main() -> None:
     ok(f"solver: {len(text)} chars, ANSWER {letter}, {dt:.1f}s")
     try:
         r2 = D.execute_round(client, args.model, row["question"], list(row["options"]),
-                             {"personas": ["critic"], "sees": "all"}, [r1], 0.7, 3072, prompts)
+                             {"personas": ["critic"], "sees": "all"}, [r1], 0.7, args.answer_tokens, prompts)
     except Exception as exc:
         fail(f"critic call failed: {exc!r}")
     if D.extract_letter(r2[0][1], n) is None:
@@ -154,7 +164,7 @@ def main() -> None:
     step("5. non-answering persona")
     try:
         r3 = D.execute_round(client, args.model, row["question"], list(row["options"]),
-                             {"personas": ["eliminator"], "sees": "none"}, [], 0.7, 3072, prompts)
+                             {"personas": ["eliminator"], "sees": "none"}, [], 0.7, args.answer_tokens, prompts)
     except Exception as exc:
         fail(f"eliminator call failed: {exc!r}")
     if not r3[0][1].strip():
@@ -165,9 +175,9 @@ def main() -> None:
     # 6 --------------------------------------------------------------------
     step("6. BudgetedRunner: live round, cache write, replay")
     scratch = Path(tempfile.mkdtemp(prefix="probe_env_"))
-    rows_by_id = {r["id"]: r for r in rows[:64]}
+    rows_by_id = {r["id"]: r for r in rows[:max(64, 2 + args.burst)]}
     runner = M.BudgetedRunner(rows_by_id, [], base_urls=args.base_url, model=args.model,
-                              temperature=0.7, answer_tokens=3072,
+                              temperature=0.7, answer_tokens=args.answer_tokens,
                               cache_path=scratch / "probe_cache.jsonl", max_calls=500,
                               api_key=args.api_key, progress=False)
     runner.reset_budget(None)
@@ -177,11 +187,12 @@ def main() -> None:
     except Exception as exc:
         fail(f"run_program live failed: {exc!r}")
     calls_after = runner.calls
-    if calls_after != 2:
-        fail(f"solver->critic should cost 2 calls, runner charged {calls_after}")
+    expect = 2 + runner.summaries if args.v2 else 2
+    if calls_after != expect:
+        fail(f"solver->critic should cost {expect} calls, runner charged {calls_after}")
     runner.reset_budget(0)                           # replay only
     out2 = M.run_program(M.chain("critic"), runner, rows_by_id[q])
-    if runner.calls != 2 or out2["letter"] != out["letter"]:
+    if runner.calls != calls_after or out2["letter"] != out["letter"]:
         fail("second run of the same program was not served from the cache")
     written = [json.loads(l) for l in (scratch / "probe_cache.jsonl").open() if l.strip()]
     if len(written) != 2 or not all(M.well_formed(w) for w in written):
@@ -203,7 +214,8 @@ def main() -> None:
         fail(f"burst: covered {ev.covered}/{len(qids)}, errors {runner.errors}")
     rate = made / dt
     ok(f"{made} calls in {dt:.0f}s -> {rate:.2f} calls/s (~{rate * 3600:,.0f}/hour); "
-       f"letters parsed on all {ev.covered}")
+       + (f"{runner.summaries} summary calls; " if args.v2 else "")
+       + f"letters parsed on all {ev.covered}")
     if rate < 0.3:
         print("        note: slow; a full run at this rate takes many days. "
               "Check --max-num-seqs / GPU sharing on the server.")
