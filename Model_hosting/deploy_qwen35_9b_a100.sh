@@ -20,7 +20,7 @@ CUDA_DEVICES="${1:-0}"
 N_GPUS=$(awk -F',' '{print NF}' <<< "$CUDA_DEVICES")
 echo "Qwen/Qwen3.5-9B: $N_GPUS copy/copies, one per GPU, on $CUDA_DEVICES"
 
-FLASHINFER_DISABLE_VERSION_CHECK=1 CUDA_VISIBLE_DEVICES="$CUDA_DEVICES" vllm serve "Qwen/Qwen3.5-9B" \
+HF_HUB_CACHE=/workspace/models FLASHINFER_DISABLE_VERSION_CHECK=1 CUDA_VISIBLE_DEVICES="$CUDA_DEVICES" vllm serve "Qwen/Qwen3.5-9B" \
   --trust-remote-code --host localhost --port 7472 \
   --max-model-len 32768 \
   --data-parallel-size "$N_GPUS" \

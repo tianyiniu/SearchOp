@@ -1,0 +1,42 @@
+INTRODUCTION OUTLINE (NAACL draft)
+
+% 1. Why multi-agent debate (MAD), and why not one strong model?
+% Introduction to multi-agent debate, why do we need to care about multi-agent debate? why not strong single model?
+- Multi-agent interaction at inference time, such as LLM debate, improves LLM reasoning (Du et al., 2023; Liang et al., 2023).
+- It helps in two ways:
+  - it raises the accuracy of frontier LLMs;
+  - groups of small, open LLMs can match proprietary frontier models, sometimes at a lower total token cost than one long frontier call.
+- But debate is brittle. Known failure modes:
+  - conformity: agents copy the first speaker or the majority, so early errors spread ("degeneration of thought", Liang et al., 2023);
+  - correct answers flip to wrong in later rounds (Wynn et al., 2025);
+  - at matched compute, debate often fails to beat simple self-consistency or majority vote (Smit et al., 2024).
+- So the question is not whether to debate, but how to compose the debate for each query.
+
+% 2. Gap: fixed pipelines vs. LLM orchestrators
+% gap in literature, explain where our work fits in. why orchestrator? why don't current approaches work?
+- Prior work falls into two camps:
+  (a) fixed debate pipelines, chosen per domain or per dataset, by hand or by automated workflow search (e.g., ADAS, Hu et al., 2024; AFlow, Zhang et al., 2024);
+  (b) an external orchestrator LLM that builds the debate for each query, often trained or tuned for it (e.g., MaAS, Zhang et al., 2025; Dang et al., 2025).
+- Fixed pipelines cannot adapt to each query. Easy queries get more reasoning than they need, and hard queries get too little.
+- Orchestrators adapt to each query, but they add a separate model to the debate. This makes the pipeline more brittle and more complex, and it often needs training for each workflow.
+
+% 3. Our method
+% short paragraph introducing our method
+- We draw on the strengths of both approaches: the per-query adaptivity of an orchestrator, with the simplicity and low cost of a fixed pipeline.
+- Programs. We write each debate as a program: a fixed plan of rounds plus an ordered list of if-then rules (e.g., "if round 1 is unanimous, stop"). The rules move the orchestrator's per-query decisions into the debate itself. No extra model is needed at test time.
+- Clusters. On each dataset's train split, we group questions that need similar reasoning.
+- Search. For each cluster, a strong LLM writes custom seed programs. We add hand-written programs from prior work, then run an evolutionary search: each generation mutates programs and keeps the best for each cluster.
+- Test time. Each question goes to its nearest cluster and runs that cluster's best program.
+
+% 4. Results and ablations (short)
+% short paragraphs introducing our results (and ablations)
+- Across general reasoning, math and search, our method gets X% higher accuracy with Y% fewer tokens than [strongest baseline].
+- Ablation: the search's hyperparameters trade accuracy against token cost.
+- Finding: early in the search, selection favours accurate programs. Later, it favours token-efficient programs.
+
+% 5. Significance
+% Significance or impact of the work (see final sentence in abstract and elaborate)
+- Lightweight, interpretable programs are enough to orchestrate multi-agent interaction for each query. They are an efficient alternative to learned LLM orchestrators.
+- Interpretability: each program is short and readable, so a person can inspect, edit or audit what the debate does for each question type.
+- Low deployment cost: no orchestrator to train or serve. A program runs with the same model, so it transfers to new open models without retraining.
+- Analysis: the searched programs show which debate structures help which kinds of question. This is a tool to study when debate helps, not only a way to make it help.
