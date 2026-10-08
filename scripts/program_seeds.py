@@ -61,8 +61,8 @@ def summarize(prog: dict) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--clusters", type=Path, default=ROOT / "outputs/clusters_train_both.json")
-    ap.add_argument("--dataset", type=Path, default=ROOT / "datasets/supergpqa_program_search_train.json")
+    ap.add_argument("--clusters", type=Path, default=ROOT / "outputs/describe_v3/clusters_600_train.json")
+    ap.add_argument("--dataset", type=Path, default=ROOT / "datasets/supergpqa_600_train.json")
     ap.add_argument("--per-group", type=int, default=50)
     ap.add_argument("--out", type=Path, default=ROOT / "outputs/cluster_search/seeds.json")
     ap.add_argument("--seed", type=int, default=0)

@@ -31,8 +31,8 @@ so on. Each table has avg@1 (first replicate only), avg@n, pass@n (any
 replicate right) and speaker turns. Differences come with a paired standard
 error over questions.
 
-    python scripts/eval_routed_dev.py --run outputs/cluster_search_gptoss_v3/run1 \\
-        --routes outputs/routes_dev_small.json --model openai/gpt-oss-20b \\
+    python scripts/eval_routed_dev.py --run outputs/pipeline_cluster_gptoss/run3 \\
+        --routes outputs/describe_v3/routes_600_test.json --model openai/gpt-oss-20b \\
         --base-urls http://localhost:7472/v1 --temperature 1.0 --visible-reasoning
 
 The executor settings must equal those of the search (they are read from the
@@ -51,7 +51,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import evolve_program_clusters_v3 as V3  # noqa: E402
+import evolve_pipeline_cluster as V3  # noqa: E402
 import program_space as P  # noqa: E402
 import schema_fitness as SF  # noqa: E402
 from program_space import ProgRecord  # noqa: E402
@@ -71,13 +71,14 @@ def main() -> None:
     ap.add_argument("--run", type=Path, required=True,
                     help="search run directory (champions.json, summary.json and archive.jsonl are read; "
                          "only <run>/dev_eval is written)")
-    ap.add_argument("--routes", type=Path, default=ROOT / "outputs/routes_dev_small.json")
-    ap.add_argument("--dataset", type=Path, default=ROOT / "datasets/supergpqa_program_search_dev_small.json")
+    ap.add_argument("--routes", type=Path, default=ROOT / "outputs/describe_v3/routes_600_test.json")
+    ap.add_argument("--dataset", type=Path, default=ROOT / "datasets/supergpqa_600_test.json")
     ap.add_argument("--out", type=Path, default=None, help="default: <run>/dev_eval")
     ap.add_argument("--reps", type=int, default=3,
                     help="replicates, run one after another with the tables written after each")
     ap.add_argument("--baselines", default="direct,mad,self_refine")
-    ap.add_argument("--max-calls-per-question", type=int, default=16)
+    ap.add_argument("--max-calls-per-question", type=int, default=None,
+                    help="default: the turn cap (--turn-cap, 16 unless set)")
     ap.add_argument("--no-live", action="store_true", help="cache only: score what is already recorded")
     ap.add_argument("--external", default="",
                     help="independently run baselines to show beside ours, as label=path pairs separated by "
@@ -98,17 +99,14 @@ def main() -> None:
                       help="round cache for the dev debates (default <out>/rounds_<model>.jsonl)")
     live.add_argument("--max-total-calls", type=int, default=200_000)
     live.add_argument("--ignore-cache-lock", action="store_true")
-    ap.add_argument("--digest-head", type=int, default=P.DIGEST_HEAD)
-    ap.add_argument("--digest-tail", type=int, default=P.DIGEST_TAIL)
-    ap.add_argument("--visible-reasoning", action="store_true")
     P.add_executor_args(ap)
     args = ap.parse_args()
 
-    settings = P.configure_executor(args.digest_head, args.digest_tail, args.visible_reasoning,
-                                    deep_think=args.deep_think, summary_words=args.summary_words)
-    settings["model"] = args.model
     with (args.run / "archive.jsonl").open() as f:
         header = json.loads(f.readline())
+    # with no server (--no-live), the search's window stands in for the server's
+    settings = P.configure_from_args(args, fallback_window=(header.get("settings") or {}).get("window"))
+    settings["model"] = args.model
     if header.get("settings") != settings:
         raise SystemExit(f"the search ran with {header.get('settings')}, this run asks for {settings}")
 
@@ -118,6 +116,7 @@ def main() -> None:
         raise SystemExit(f"the routes were made for {routed['clusters']}, the search used {header['clusters']}")
     routes = routed["routes"]
     rows = {r["id"]: r for r in json.loads(args.dataset.read_text())}
+    P.check_rows(rows.values())             # the dataset suits the answer mode
     qids = [q for q in rows if q in routes]
     if len(qids) < len(rows):
         log(f"note: {len(rows) - len(qids)} dev questions have no route (no description) and are left out")
@@ -156,21 +155,30 @@ def main() -> None:
         enrol("global", next(p["program"] for p in champs["global"]["programs"]
                              if p["key"] == champs["global"]["champion"]))
     else:
-        global_label = "best overall program on the search questions"
-        enrol("global", summary["top_overall"][0]["program"])
+        # the global slot's holder (the strongest program over all search questions), if the
+        # search had one; otherwise the best overall program
+        g_slot = [x for x in summary["slots"] if x["slot"] == "G"]
+        global_label = "global slot holder" if g_slot else "best overall program on the search questions"
+        enrol("global", g_slot[0]["program"] if g_slot else summary["top_overall"][0]["program"])
     baselines = [b for b in args.baselines.split(",") if b]
     for b in baselines:
         enrol(b, P.PROTOCOLS[b])
-    # independently run baselines: per question, the list of right/wrong marks of their runs
+    # independently run baselines: per question, the list of right/wrong marks of their runs,
+    # and their completion tokens per run when the score file has them (score.py saves them now)
     external: dict[str, dict[str, list[int]]] = {}
+    external_tokens: dict[str, dict[str, list[int]]] = {}
     for pair in [x for x in args.external.split(",") if x]:
         label, path = pair.split("=", 1)
         per_q = json.loads(Path(path).read_text())["per_question"]
         lacking = [q for q in qids if q not in per_q]
         if lacking:
             raise SystemExit(f"--external {label}: {len(lacking)} dev questions are not in {path}")
-        external[label] = {q: [int(p == per_q[q]["answer"]) for p in per_q[q]["preds"]] for q in qids}
-    log(f"{len(qids)} dev questions; {len(role)} roles, {len(records)} distinct programs; "
+        # right/wrong per run: the scorer's marks (a judge's verdicts for open answers), or letter == key
+        external[label] = {q: (list(per_q[q]["marks"]) if "marks" in per_q[q]
+                               else [int(p == per_q[q]["answer"]) for p in per_q[q]["preds"]]) for q in qids}
+        if all("tokens" in per_q[q] for q in qids):
+            external_tokens[label] = {q: per_q[q]["tokens"] for q in qids}
+    log(f"{len(qids)} questions of {args.dataset.name}; {len(role)} roles, {len(records)} distinct programs; "
         f"{args.reps} replicates; settings {settings}")
 
     out_dir = args.out or args.run / "dev_eval"
@@ -183,10 +191,12 @@ def main() -> None:
     shim = SimpleNamespace(runner=runner, rows=rows, args=args)     # what Search.run_jobs/replay read
     ctx = SimpleNamespace(args=args, settings=settings, records=records, role=role, routes=routes,
                           qids=qids, groups=groups, baselines=baselines, out_dir=out_dir,
-                          sets=sets, global_label=global_label, external=external)
+                          sets=sets, global_label=global_label, external=external,
+                          external_tokens=external_tokens)
     # one replicate at a time, every program on every question, and the tables
     # after each: the first-replicate numbers are out after a third of the work
     try:
+        left = 0
         for rep in range(args.reps):
             for rec in records.values():
                 V3.Search.replay(shim, rec, qids, rep)
@@ -194,18 +204,26 @@ def main() -> None:
                 spent = V3.Search.run_jobs(shim, [(rec, q, rep) for rec in records.values() for q in qids],
                                            f"dev, replicate {rep + 1} of {args.reps}")
                 log(f"replicate {rep + 1}: {spent} speaker turns spent")
-            write_report(ctx, list(range(rep + 1)))
-    except SF.BudgetExhausted as exc:
+            left = write_report(ctx, list(range(rep + 1)))
+        if left:                                  # a table with debates missing is not a result: stop nonzero
+            raise SystemExit(f"{left} test debates are missing (server errors?); they are counted as wrong in "
+                             f"the tables. Run the script again: it fills them from where it stopped.")
+    except SF.BudgetExhausted as exc:              # the tables lack debates: not a result, stop nonzero
         log(f"stopped: {exc}")
+        raise SystemExit(f"the call cap stopped the evaluation ({exc}); what was recorded is kept, run again "
+                         f"(with a higher --max-total-calls) to finish")
     except KeyboardInterrupt:
         log("interrupted; what was recorded is kept, run again to finish")
         raise SystemExit(1)
     finally:
+        if P.JUDGE is not None:
+            log(f"judge {P.JUDGE.model}: {P.JUDGE.stats}")
         runner.close()
 
 
-def write_report(ctx: SimpleNamespace, reps: list[int]) -> None:
-    """The tables over the replicates in `reps` -> results_k<n>.json / .md."""
+def write_report(ctx: SimpleNamespace, reps: list[int]) -> int:
+    """The tables over the replicates in `reps` -> results_k<n>.json / .md. Returns the number of
+    debates missing (they are counted as wrong, and the .md says so at its top)."""
     args, records, role, routes, qids, groups, baselines = (ctx.args, ctx.records, ctx.role, ctx.routes,
                                                             ctx.qids, ctx.groups, ctx.baselines)
     n = len(reps)
@@ -221,6 +239,13 @@ def write_report(ctx: SimpleNamespace, reps: list[int]) -> None:
         rec = records[role[name]]
         vals = [rec.reps[rep][q][1] for rep in reps if q in rec.reps.get(rep, {})]
         return sum(vals) / len(vals) if vals else 0.0
+
+    def tokens(name: str, q: str) -> float | None:
+        """Mean completion tokens of the debate over the replicates (None if not logged)."""
+        rec = records[role[name]]
+        vals = [rec.reps[rep][q][5] for rep in reps
+                if q in rec.reps.get(rep, {}) and len(rec.reps[rep][q]) > 5 and rec.reps[rep][q][5] is not None]
+        return sum(vals) / len(vals) if vals else None
 
     # a row is, per question, a list of (weight, program) choices; one choice for
     # most rows, all group programs at equal weight for the random-group rows
@@ -249,17 +274,22 @@ def write_report(ctx: SimpleNamespace, reps: list[int]) -> None:
         avg = [sum(w * sum(marks(p, q)) / n for w, p in c) for c, q in zip(choice, qids)]
         anyc = [sum(w * max(marks(p, q)) for w, p in c) for c, q in zip(choice, qids)]
         t = [sum(w * turns(p, q) for w, p in c) for c, q in zip(choice, qids)]
+        tok = [[tokens(p, q) for _, p in c] for c, q in zip(choice, qids)]
+        tok_mean = (sum(sum(w * x for (w, _), x in zip(c, tq)) for c, tq in zip(choice, tok)) / len(qids)
+                    if all(x is not None for tq in tok for x in tq) else None)
         per_q[name] = avg
         table[name] = {"avg@1": mean_se(first)[0], f"avg@{n}": mean_se(avg)[0], "se": mean_se(avg)[1],
-                       f"pass@{n}": mean_se(anyc)[0], "turns": sum(t) / len(t)}
+                       f"pass@{n}": mean_se(anyc)[0], "turns": sum(t) / len(t), "tokens": tok_mean}
     # independently run baselines: their first n runs (fewer if they have fewer)
     for label, per in ctx.external.items():
         runs = [per[q][:n] for q in qids]
         avg = [sum(r) / len(r) for r in runs]
         per_q[f"external {label}"] = avg
+        et = ctx.external_tokens.get(label)
+        tok_mean = (sum(sum(et[q][:n]) / len(et[q][:n]) for q in qids) / len(qids)) if et else None
         table[f"external {label}"] = {"avg@1": mean_se([r[0] for r in runs])[0], f"avg@{n}": mean_se(avg)[0],
                                       "se": mean_se(avg)[1], f"pass@{n}": mean_se([max(r) for r in runs])[0],
-                                      "turns": float("nan"), "runs": min(len(r) for r in runs)}
+                                      "turns": float("nan"), "tokens": tok_mean, "runs": min(len(r) for r in runs)}
     for prefix, label in sets:
         avg = [max(sum(marks(f"{prefix}_{g}", q)) / n for g in groups) for q in qids]
         per_q[f"best of {label} (bound)"] = avg
@@ -267,47 +297,71 @@ def write_report(ctx: SimpleNamespace, reps: list[int]) -> None:
             "avg@1": mean_se([max(marks(f"{prefix}_{g}", q)[0] for g in groups) for q in qids])[0],
             f"avg@{n}": mean_se(avg)[0], "se": mean_se(avg)[1],
             f"pass@{n}": mean_se([max(max(marks(f"{prefix}_{g}", q)) for g in groups) for q in qids])[0],
-            "turns": sum(sum(turns(f"{prefix}_{g}", q) for g in groups) for q in qids) / len(qids)}
+            "turns": sum(sum(turns(f"{prefix}_{g}", q) for g in groups) for q in qids) / len(qids),
+            "tokens": None}
 
-    report = [f"# Dev results: {args.model}, {len(qids)} questions, replicates 1..{n} of {args.reps}", "",
+    report = [f"# Results on {args.dataset.name}: {args.model}, {len(qids)} questions, replicates 1..{n} of {args.reps}", "",
               f"avg@1 uses the first replicate only. avg@{n} is the mean over questions of each question's "
               f"mean mark over {n} replicate(s); ± is its standard error over questions. pass@{n} counts a "
               f"question as right if any replicate was. Turns are speaker turns per question (for a bound: "
-              f"the cost of running all six programs).", "",
+              f"the cost of running every program of the set); tokens are completion tokens per question "
+              + ("(every call of the debate, except a summary that no later speaker read; '-' where they were "
+                 "not logged)." if ctx.settings.get("count_read_summaries") else
+                 "(every call of the debate, summaries included; '-' where they were not logged)."), "",
               ("'Held-out champions' are the programs picked per group on the held-out training questions; "
                if len(sets) > 1 else "The champion step was skipped for this run, so no held-out champions. ")
               + "'Strongest grid programs' are the slot-A holders, picked on the search questions alone. "
               + f"'{global_label}' is one program used for every question. 'External' rows are the "
               "independently run baselines (full thinking budget, their own scorer): these are the baselines "
-              "to report. 'In-executor' rows are the same protocols run as debate programs under this "
-              "executor's settings; they show what the executor costs, not what the baseline can do.", "",
-              "| row | avg@1 | " + (f"avg@{n} | " if n > 1 else "") + f"± | pass@{n} | turns |",
-              "|---|---|---|---|---|" + ("---|" if n > 1 else "")]
+              "to report. Where given, a 'no recovery' row is the method exactly as published; the row without "
+              "that label asks a reply cut off at its token limit, once, for the letter its reasoning supports "
+              "(as this executor does). 'In-executor' rows are the same protocols run as debate programs under "
+              "this executor's settings.", "",
+              "| row | avg@1 | " + (f"avg@{n} | " if n > 1 else "") + f"± | pass@{n} | turns | tokens |",
+              "|---|---|---|---|---|---|" + ("---|" if n > 1 else "")]
     for name, d in table.items():
         report.append(f"| {name} | {d['avg@1']:.1%} | " + (f"{d[f'avg@{n}']:.1%} | " if n > 1 else "")
                       + f"{d['se']:.1%} | {d[f'pass@{n}']:.1%} | "
-                      + ("-" if d["turns"] != d["turns"] else f"{d['turns']:.1f}") + " |")
+                      + ("-" if d["turns"] != d["turns"] else f"{d['turns']:.1f}") + " | "
+                      + ("-" if d.get("tokens") is None else f"{d['tokens']:,.0f}") + " |")
 
     # the baseline to beat: the best independently run one if any were given, else the best in-executor one
     pool_b = [f"external {x}" for x in ctx.external] or [f"in-executor {b}" for b in baselines]
     best_b = max(pool_b, key=lambda k: table[k][f"avg@{n}"]) if pool_b else None
+    # and the best protocol run as a program in this same executor (the seeds include them)
+    pool_in = [f"in-executor {b}" for b in baselines]
+    best_in = max(pool_in, key=lambda k: table[k][f"avg@{n}"]) if pool_in else None
+    beat = [(x, why) for x, why in
+            ((best_b, "is the search worth anything (best baseline, picked on these questions)"),
+             (best_in, "does the search beat the protocols in its own executor (best one, picked on these "
+                       "questions)")) if x]
+    beat = [(x, why) for i, (x, why) in enumerate(beat) if x not in [y for y, _ in beat[:i]]]
     diffs = {}
     report += ["", f"Differences in avg@{n}, with a paired standard error over questions:", "",
                "| row | minus | difference | paired ± | question |", "|---|---|---|---|---|"]
     for main, rand in [(f"routed, {label}", f"random group, {label} (expected)") for _, label in sets]:
         against = [(rand, "is the routing itself worth anything"),
-                   (global_label, "are per-group programs worth anything")]
-        if best_b:
-            against.append((best_b, "is the search worth anything (best baseline, picked on these questions)"))
+                   (global_label, "are per-group programs worth anything")] + beat
         for other, why in against:
             diff, se = V3.paired_se(per_q[main], per_q[other])
             diffs[f"{main} - {other}"] = {"diff": diff, "se": se}
             report.append(f"| {main} | {other} | {diff:+.1%} | {se:.1%} | {why} |")
+    for other, why in beat:                              # the one program used for every question
+        diff, se = V3.paired_se(per_q[global_label], per_q[other])
+        diffs[f"{global_label} - {other}"] = {"diff": diff, "se": se}
+        report.append(f"| {global_label} | {other} | {diff:+.1%} | {se:.1%} | {why} |")
     if len(sets) > 1:
         diff, se = V3.paired_se(per_q["routed, held-out champions"], per_q["routed, strongest grid programs"])
         diffs["held-out champions - strongest grid programs"] = {"diff": diff, "se": se}
         report.append(f"| routed, held-out champions | routed, strongest grid programs | {diff:+.1%} | {se:.1%} | "
                       f"does picking on held-out questions help |")
+
+    # the per-question turn cap: a debate it stopped ran a shorter program than the one on record
+    cut = {name: sum(P.cap_cuts(records[k], qids, rep) for rep in reps) for name, k in role.items()}
+    report += ["", f"Debates the turn cap stopped (the cap replaced a rule's round with the program's default "
+                   f"stop), of {len(qids) * n} per program:", "",
+               "| program | debates stopped by the cap |", "|---|---|"]
+    report += [f"| {name} | {c} |" for name, c in cut.items()]
 
     report += ["", f"avg@{n} by the group the question was routed to (nearest medoid):", "",
                "| group | questions | " + " | ".join(f"its own, {label} | other groups', {label} (mean)"
@@ -335,14 +389,18 @@ def write_report(ctx: SimpleNamespace, reps: list[int]) -> None:
 
     result = {"model": args.model, "settings": ctx.settings, "run": str(args.run), "routes": str(args.routes),
               "n_questions": len(qids), "reps": n, "reps_planned": args.reps, "table": table,
-              "differences": diffs, "per_group": per_group, "missing": missing, "roles": role,
+              "differences": diffs, "per_group": per_group, "missing": missing, "cut_by_cap": cut, "roles": role,
               "programs": {k: {"name": r.name, "program": r.program,
                                "reps": {str(rep): r.reps.get(rep, {}) for rep in reps}}
                            for k, r in records.items()}}
+    if any(missing.values()):                     # shown in the table, not only in the log
+        report[1:1] = ["", f"**INCOMPLETE: debates missing (counted as wrong above): "
+                           f"{ {a: m for a, m in missing.items() if m} }. Run the script again to fill them.**"]
     (ctx.out_dir / f"results_k{n}.json").write_text(json.dumps(result, indent=1))
     (ctx.out_dir / f"results_k{n}.md").write_text("\n".join(report) + "\n")
     log("\n".join(report))
     log(f"\n-> {ctx.out_dir / f'results_k{n}.json'}, {ctx.out_dir / f'results_k{n}.md'}\n")
+    return sum(missing.values())
 
 if __name__ == "__main__":
     main()

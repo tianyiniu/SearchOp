@@ -1,4 +1,4 @@
-"""Draw the search questions of each group for the v3 program search.
+"""Draw the search questions of each group for the cluster program search.
 
 Each group's search set is a fixed-size random sample of the group, drawn
 without replacement and weighted towards the questions closest to the group's
@@ -16,7 +16,7 @@ written, and the output is a new file with the same layout, so
 program_space.load_groups reads either.
 
     python scripts/sample_cluster_subsets.py \\
-        --clusters outputs/clusters_train_both.json --out outputs/clusters_train_both_v3.json
+        --clusters tests/data/clusters_train_both.json --out archive/outputs/clusters_train_both_v3.json
 """
 
 from __future__ import annotations
@@ -47,9 +47,9 @@ def weighted_draw(order: list[int], n_pick: int, rng: np.random.Generator) -> li
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--clusters", type=Path, default=ROOT / "outputs/clusters_train_both.json")
-    ap.add_argument("--vectors", type=Path, default=ROOT / "outputs/question_vectors_train.npz")
-    ap.add_argument("--out", type=Path, default=ROOT / "outputs/clusters_train_both_v3.json")
+    ap.add_argument("--clusters", type=Path, default=ROOT / "outputs/describe_v3/clusters_600_train.json")
+    ap.add_argument("--vectors", type=Path, default=ROOT / "outputs/describe_v3/vectors_600_train.npz")
+    ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--per-cluster", type=int, default=50)
     ap.add_argument("--mh-max-mean", type=float, default=0.9,
                     help="as in cluster_questions.py, so the distances are the clustering's own")

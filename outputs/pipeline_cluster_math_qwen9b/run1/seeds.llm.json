@@ -1,0 +1,167 @@
+[
+ {
+  "name": "llm_g0_attainment_check",
+  "group": 0,
+  "strategy": "Two independent solvers establish the extremum; a verifier checks attainability when they agree, while a blind high-effort expert resolves disagreements before verification.",
+  "program": {
+   "plan": [
+    {
+     "personas": [
+      "solver",
+      "solver"
+     ]
+    }
+   ],
+   "rules": [
+    {
+     "when": [
+      "plan_left"
+     ],
+     "do": "continue"
+    },
+    {
+     "when": [
+      "step==1",
+      "r1_majority==2"
+     ],
+     "do": "verifier"
+    },
+    {
+     "when": [
+      "step==1"
+     ],
+     "do": "expert|high|blind"
+    },
+    {
+     "when": [
+      "last_round:expert"
+     ],
+     "do": "verifier"
+    }
+   ],
+   "default": "stop:last_commit"
+  },
+  "usage": {
+   "input": 6858,
+   "output": 1639
+  }
+ },
+ {
+  "name": "llm_g1_classification_audit",
+  "group": 1,
+  "strategy": "Three solvers provide independent counts; a critic checks a shared classification, while disagreement triggers a fresh expert-and-solver count without anchoring.",
+  "program": {
+   "plan": [
+    {
+     "personas": [
+      "solver",
+      "solver",
+      "solver"
+     ]
+    }
+   ],
+   "rules": [
+    {
+     "when": [
+      "plan_left"
+     ],
+     "do": "continue"
+    },
+    {
+     "when": [
+      "step==1",
+      "r1_majority==3"
+     ],
+     "do": "critic"
+    },
+    {
+     "when": [
+      "step==1"
+     ],
+     "do": "expert_solver|blind"
+    }
+   ],
+   "default": "stop:last_commit"
+  },
+  "usage": {
+   "input": 6858,
+   "output": 1639
+  }
+ },
+ {
+  "name": "llm_g2_independent_rule_check",
+  "group": 2,
+  "strategy": "An expert and solver independently apply the governing rule; only disagreement warrants a blind high-effort expert derivation to settle the requested combination.",
+  "program": {
+   "plan": [
+    {
+     "personas": [
+      "expert",
+      "solver"
+     ]
+    }
+   ],
+   "rules": [
+    {
+     "when": [
+      "plan_left"
+     ],
+     "do": "continue"
+    },
+    {
+     "when": [
+      "step==1",
+      "r1_majority==1"
+     ],
+     "do": "expert|high|blind"
+    }
+   ],
+   "default": "stop:last_commit"
+  },
+  "usage": {
+   "input": 6858,
+   "output": 1639
+  }
+ },
+ {
+  "name": "llm_g3_spatial_crosscheck",
+  "group": 3,
+  "strategy": "A high-effort expert models the geometry, a blind solver independently interprets the arrangement, and a verifier adjudicates conflicting measurements.",
+  "program": {
+   "plan": [
+    {
+     "personas": [
+      "expert"
+     ],
+     "effort": "high"
+    },
+    {
+     "personas": [
+      "solver"
+     ],
+     "sees": "none"
+    }
+   ],
+   "rules": [
+    {
+     "when": [
+      "plan_left"
+     ],
+     "do": "continue"
+    },
+    {
+     "when": [
+      "step==2",
+      "n_distinct>=2"
+     ],
+     "do": "verifier|high"
+    }
+   ],
+   "default": "stop:last_commit"
+  },
+  "usage": {
+   "input": 6858,
+   "output": 1639
+  }
+ }
+]

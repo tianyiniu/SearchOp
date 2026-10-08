@@ -1,9 +1,42 @@
+# secrets: never committed
 .env
+.env.*
+
+# local caches and tool state
+__pycache__/
+*.pyc
+.ruff_cache/
+.claude/
+artifacts/
+*.log
+
+# large or local-only folders
 export_schema/
-outputs/
-datasets/
 Wikipedia_cache/
 backups/
 doc_context_cache/
 archive/
-baselines/
+baselines/results/
+baselines/logs/
+tests/data/
+
+# data and outputs: only what the Qwen 9B MATH run needs (the question files, the groups and
+# routes made by run_describe_math.sh, and the seeds and dev split written by its step 3 here,
+# since both use the API)
+datasets/*
+!datasets/math_l5_300_train.json
+!datasets/math_l5_test.json
+outputs/*
+!outputs/describe_math_v1/
+outputs/describe_math_v1/*
+!outputs/describe_math_v1/clusters_train.json
+!outputs/describe_math_v1/clusters_train.md
+!outputs/describe_math_v1/routes_test.json
+!outputs/pipeline_cluster_math_qwen9b/
+outputs/pipeline_cluster_math_qwen9b/*
+!outputs/pipeline_cluster_math_qwen9b/run1/
+outputs/pipeline_cluster_math_qwen9b/run1/*
+!outputs/pipeline_cluster_math_qwen9b/run1/splits.json
+!outputs/pipeline_cluster_math_qwen9b/run1/seeds.json
+!outputs/pipeline_cluster_math_qwen9b/run1/seeds.md
+!outputs/pipeline_cluster_math_qwen9b/run1/seeds.llm.json

@@ -1,7 +1,7 @@
 """Step 6: send each test question to one of the train-time question groups.
 
 A test question is described and embedded exactly as the training questions
-were (describe_questions.py, then embed_questions.py), placed in the space the
+were (the dataset's describe_<dataset>_<version>.py, then embed_questions.py), placed in the space the
 groups were built in (cluster_questions.representation) and given to the group
 whose medoid is nearest. That is the rule k-medoids itself used for the
 training questions, so the script first applies it to them and reports how
@@ -19,8 +19,8 @@ the nearest two, so a "send unsure questions to the global champion" rule can
 be tried afterwards without routing again.
 
     python scripts/route_questions.py \\
-        --test-vectors outputs/question_vectors_dev_small.npz \\
-        --out outputs/routes_dev_small.json
+        --test-vectors outputs/describe_v3/vectors_600_test.npz \\
+        --out outputs/describe_v3/routes_600_test.json
 
 No model is called. The multi-hot columns that were dropped as near-constant
 are decided on the TRAINING questions and the same columns are dropped here.
@@ -44,9 +44,13 @@ import cluster_questions as CQ  # noqa: E402
 ROOT = CQ.ROOT
 
 
-def place(vec, keep: np.ndarray, rep: str, mh_weight: float) -> np.ndarray:
-    """cluster_questions.representation, with the kept multi-hot columns given
-    (they are chosen on the training questions, never on the test questions)."""
+def place(vec, keep: np.ndarray, rep: str, mh_weight: float,
+          center: np.ndarray | None = None) -> np.ndarray:
+    """cluster_questions.representation, with the kept multi-hot columns and the
+    description centre given (both are taken from the training questions,
+    never from the test questions)."""
+    if rep == "description":
+        return CQ.representation(vec, rep, mh_weight, 1.0, center=center)
     mh = CQ.unit(vec["multihot"].astype(np.float64)[:, keep])
     te = CQ.unit(vec["template"].astype(np.float64))
     if rep == "multihot":
@@ -60,10 +64,10 @@ def place(vec, keep: np.ndarray, rep: str, mh_weight: float) -> np.ndarray:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--clusters", type=Path, default=ROOT / "outputs/clusters_train_both_v3.json")
-    ap.add_argument("--train-vectors", type=Path, default=ROOT / "outputs/question_vectors_train.npz")
-    ap.add_argument("--test-vectors", type=Path, default=ROOT / "outputs/question_vectors_dev_small.npz")
-    ap.add_argument("--out", type=Path, default=ROOT / "outputs/routes_dev_small.json")
+    ap.add_argument("--clusters", type=Path, default=ROOT / "outputs/describe_v3/clusters_600_train.json")
+    ap.add_argument("--train-vectors", type=Path, default=ROOT / "outputs/describe_v3/vectors_600_train.npz")
+    ap.add_argument("--test-vectors", type=Path, default=ROOT / "outputs/describe_v3/vectors_600_test.npz")
+    ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--mh-max-mean", type=float, default=0.9,
                     help="as in cluster_questions.py; must be the value the groups were built with")
     ap.add_argument("--knn", type=int, default=10, help="neighbours for the knn route")
@@ -80,7 +84,8 @@ def main() -> None:
 
     means = train["multihot"].astype(np.float64).mean(axis=0)
     keep = (means <= args.mh_max_mean) & (means > 0)
-    x_train, x_test = place(train, keep, rep, mh_weight), place(test, keep, rep, mh_weight)
+    center = CQ.description_center(train) if rep == "description" else None
+    x_train, x_test = place(train, keep, rep, mh_weight, center), place(test, keep, rep, mh_weight, center)
     # the vectors the groups were built from, recomputed by the clustering code itself
     if not np.allclose(x_train, CQ.representation(train, rep, mh_weight, args.mh_max_mean)):
         raise SystemExit("the training vectors placed here differ from cluster_questions.representation")

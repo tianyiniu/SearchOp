@@ -67,7 +67,8 @@ import debate_mcq as D
 import schema_fitness as SF
 import adaptive_debate_mcq as B
 
-MAX_STEPS = 12                     # safety cap on rounds per question
+MAX_STEPS = 12                     # decisions per question when no turn cap is given (with a cap, the cap
+                                   # bounds the debate: run_program then allows cap + 2 decisions)
 
 
 # --- actions ----------------------------------------------------------------
@@ -107,7 +108,67 @@ ELIMINATOR_ACTIONS = ("eliminate", "elim_blind")
 #                 beat last_commit by 1.3 points at no extra cost: the personas
 #                 flip answers at chance precision, so the last word is no better
 #                 than any other word, and counting all of them averages the noise.
+# With LAST_ROUND_VOTE on (program_space --last-round-vote; off by default, so every
+# earlier run reads as it did), last_commit and last_speaker both read the most common
+# letter of the last round that committed one (ties go to the earliest speaker of that
+# round): a round of several speakers is read by its majority, not by whichever speaker
+# happens to be listed last. With one speaker per round, last_commit reads exactly as
+# before; last_speaker differs only when the last speaker commits nothing, where it now
+# reads the last round that committed a letter instead of giving no answer.
 STOP_READS = ("last_commit", "last_speaker", "vote")
+LAST_ROUND_VOTE = False
+
+
+def set_last_round_vote(on: bool) -> None:
+    global LAST_ROUND_VOTE
+    LAST_ROUND_VOTE = bool(on)
+
+
+def round_answer(rnd: list, n: int) -> str | None:
+    """One round's answer: the most common letter its speakers gave (ties: the earliest speaker);
+    None if none of them gave one."""
+    letters = SF.committed_letters([rnd], n)
+    return Counter(letters).most_common(1)[0][0] if letters else None
+
+
+def last_round_vote(rounds: list, n: int) -> str | None:
+    """The most common committed letter of the last round that committed any (ties: the
+    earliest speaker of that round); None if no round committed one."""
+    for rnd in reversed(rounds):
+        letters = SF.committed_letters([rnd], n)
+        if letters:
+            return Counter(letters).most_common(1)[0][0]
+    return None
+
+
+# With COUNT_READ_SUMMARIES on (program_space --count-read-summaries; off by default, so every
+# earlier run counts as it did), a debate's tokens leave out the answer-locked summaries of the
+# rounds that no later round of the same debate read: a summary is written only for later
+# speakers and never changes an answer, so an executor that wrote it only when it is read would
+# give the same answers at that cost. The summaries are still written when the reply is (so the
+# round cache stays as it is); only the count changes. It needs recordings made with
+# debate_mcq.SUMMARY_SPLIT on (the same option sets both); any other recording counts in full.
+COUNT_READ_SUMMARIES = False
+
+
+def set_count_read_summaries(on: bool) -> None:
+    global COUNT_READ_SUMMARIES
+    COUNT_READ_SUMMARIES = bool(on)
+
+
+def round_read_later(specs: list[dict], i: int) -> bool:
+    """Whether a round after round `i` of the debate `specs` shows its speakers' replies (and so
+    their summaries): one that sees the whole debate (or its reasoning without the letters), or
+    the next round if it sees the last round only. A round that sees nothing or only the letters
+    reads no summary, nor does a speaker that ignores the debate (debate_mcq.FORCED_BLIND)."""
+    for j in range(i + 1, len(specs)):
+        spec = specs[j]
+        if all(p in D.FORCED_BLIND for p in spec["personas"]):
+            continue
+        mode = spec.get("sees", D.DEFAULT_SEES)
+        if mode in ("all", "no_letters") or (mode == "last_round" and j == i + 1):
+            return True
+    return False
 
 
 # --- observable state and conditions ----------------------------------------
@@ -147,7 +208,7 @@ _NUMERIC = {"step": lambda st: st.step,
             "n_distinct": lambda st: st.n_distinct}
 _NUM_RE = re.compile(r"(step|acts|r1_majority|n_distinct)(==|>=|<=|<|>)(\d+)")
 _BOOL_CONDS = ("plan_left", "not_extended", "confirmed_switch", "parked",
-               "last_round_agree", "verifier_backed")
+               "last_round_agree", "verifier_backed", "kept_answer")
 
 
 def check_condition(cond: str) -> None:
@@ -192,6 +253,11 @@ def _cond(cond: str, st: State) -> bool:
         letters = [D.extract_letter(r, st.n) for p, r in st.rounds[-1]
                    if p not in D.NON_ANSWERING]
         return len(letters) >= 2 and None not in letters and len(set(letters)) == 1
+    if cond == "kept_answer":                  # the last round's answer is the round before's (2026-10-06)
+        if len(st.rounds) < 2:
+            return False
+        last = round_answer(st.rounds[-1], st.n)
+        return last is not None and last == round_answer(st.rounds[-2], st.n)
     if cond == "verifier_backed":              # last round's letter repeats an earlier commit
         if not st.rounds:
             return False
@@ -275,11 +341,13 @@ class CacheRunner:
 
     def run_round(self, qid: str, all_rounds: list, executed_specs: list[dict],
                   round_spec: dict, rep: int = 0, prompts: dict | None = None) -> list:
-        key = (qid, SF.path_key(executed_specs + [round_spec], prompts), rep)
-        hit = self._cache.get(key)
-        if hit is None:
-            raise OffCache(key)
-        return [tuple(pr) for pr in hit]
+        per_speaker, keys = SF.round_keys(executed_specs, round_spec, prompts)
+        hits = [self._cache.get((qid, k, rep)) for k in keys]
+        if any(h is None for h in hits):
+            raise OffCache((qid, keys, rep))
+        if per_speaker:
+            return [tuple(h[0]) for h in hits]
+        return [tuple(pr) for pr in hits[0]]
 
 
 def _pid_alive(pid: int) -> bool:
@@ -370,73 +438,124 @@ class BudgetedRunner(SF.RoundRunner):
             self.novelty_budget, self.novel_calls = budget, 0
 
     def run_round(self, qid, all_rounds, executed_specs, round_spec, rep=0, prompts=None):
-        key = (qid, SF.path_key(executed_specs + [round_spec], prompts), rep)
-        with self._lock:
-            hit = self._cache.get(key)
+        _, keys, hit, missing = self.lookup(qid, executed_specs, round_spec, rep, prompts)
         if hit is not None:
-            return [tuple(pr) for pr in hit]
-        cost = len(round_spec["personas"])
+            return hit
+        cost = len(missing)                  # speakers that must be run (all of them, unless blind)
         with self._novel_lock:
             if self.novelty_budget is not None and self.novel_calls + cost > self.novelty_budget:
-                raise OffCache(key)
+                raise OffCache((qid, keys, rep))
             self.novel_calls += cost
         out = super().run_round(qid, all_rounds, executed_specs, round_spec,
                                 rep=rep, prompts=prompts)
         if not out:                          # errored round: not cached, not usable
-            raise OffCache(key)
+            raise OffCache((qid, keys, rep))
         return out
 
 
+# How a final answer is graded. None: the letter against row["answer_letter"] (the
+# multiple-choice datasets). With open answers, program_space.configure_from_args sets
+# a judge here (judge_answers.Judge.grade_row): (row, final answer) -> right or not.
+GRADER = None
+
+
+def set_grader(fn) -> None:
+    global GRADER
+    GRADER = fn
+
+
 def run_program(prog: dict, runner, row: dict, rep: int = 0,
-                max_calls: int | None = None) -> dict:
+                max_calls: int | None = None, prompt_overrides: dict | None = None,
+                grade: bool = True) -> dict:
     """Drive one question with a program. `runner` is a CacheRunner (replay) or
     a live runner (both expose run_round with the same signature). With
     `max_calls`, an action that would push the question past that many model
-    calls is replaced by the program's default stop."""
+    calls is replaced by the program's default stop. `prompt_overrides`
+    ({persona: system prompt}; none by default) replaces those personas' prompts
+    for this question, with '{field}' filled from the question as in the expert
+    prompt. The round cache key hashes the prompts, so overridden prompts get
+    their own recordings and earlier recordings keep theirs. The result's
+    "tokens" are the completion tokens of the debate's recordings (with
+    COUNT_READ_SUMMARIES, less the summaries no later round read), and
+    "capped" says whether the cap replaced an action with the default stop (or the debate ran out of
+    decisions, which a turn cap makes impossible). `grade` False leaves "correct" None and calls no
+    grader (for playing a program through made-up answers, as the tests do)."""
     qid, n = row["id"], len(row["options"])
     prompts = B.question_prompts(row)
+    if prompt_overrides:
+        field = row.get("field") or row.get("discipline") or "the relevant field"
+        prompts = {**prompts, **{p: t.replace("{field}", field) for p, t in prompt_overrides.items()}}
     plan = prog["plan"]
     rounds: list = []
     specs: list[dict] = []
     actions: list[str] = []
+    fired: list[int] = []                      # per decision: the rule that matched, -1 = none
+    tokens = 0
+    count_tokens = hasattr(runner, "round_tokens")
+    split = count_tokens and COUNT_READ_SUMMARIES and hasattr(runner, "round_summary_tokens")
+    summary_tokens: list[int] = []             # per round run, its answer-locked summaries' tokens
+    capped = False                             # the turn cap stopped the debate (program_space.cap_cut)
     read = prog["default"].removeprefix("stop:")
 
-    for _ in range(MAX_STEPS):
+    # Every round costs at least one turn, so with a turn cap at most `max_calls` decisions run a round and
+    # the next one must stop: the cap, not a step count, ends the debate (until 2026-10-06 the loop stopped
+    # after 12 decisions, below a 15- or 16-turn cap, read the default and recorded no cut).
+    steps = MAX_STEPS if max_calls is None else max(MAX_STEPS, int(max_calls) + 2)
+    for _ in range(steps):
         st = State(rounds, specs, actions, plan, n)
-        act = prog["default"]
-        for rule in prog["rules"]:
+        act, hit = prog["default"], -1
+        for i, rule in enumerate(prog["rules"]):
             if all(_cond(c, st) for c in rule["when"]):
-                act = rule["do"]
+                act, hit = rule["do"], i
                 break
+        fired.append(hit)
         if act == "continue" and st.plan_pos >= len(plan):
             act = prog["default"]              # nothing left to continue: stop
         if not act.startswith("stop:") and max_calls is not None:
             todo = [plan[st.plan_pos]] if act == "continue" else ACTIONS[act]
-            spent = sum(D.turn_cost(s["personas"]) for s in specs)
-            if spent + sum(D.turn_cost(s["personas"]) for s in todo) > max_calls:
+            spent = sum(D.spec_cost(s) for s in specs)
+            if spent + sum(D.spec_cost(s) for s in todo) > max_calls:
                 act = prog["default"]          # over the per-question cap: stop
+                capped = True
         if act.startswith("stop:"):
             read = act[5:]
             break
         for spec in [plan[st.plan_pos]] if act == "continue" else ACTIONS[act]:
             rounds.append(runner.run_round(qid, rounds, specs, spec, rep=rep,
                                            prompts=prompts))
+            if count_tokens:
+                tokens += runner.round_tokens(qid, specs, spec, rep=rep, prompts=prompts)
+            if split:
+                summary_tokens.append(runner.round_summary_tokens(qid, specs, spec, rep=rep, prompts=prompts))
             specs.append(spec)
         actions.append(act)
+    else:                                      # no decision stopped the debate: it was cut, read by the default
+        capped = True
+    if split:                                  # summaries no later round of this debate read
+        tokens -= sum(t for i, t in enumerate(summary_tokens) if not round_read_later(specs, i))
 
-    if read == "last_speaker":
-        final = D.final_letter("last", rounds, n) if rounds else None
-    elif read == "vote":
+    if read == "vote":
         letters = SF.committed_letters(rounds, n)
         final = Counter(letters).most_common(1)[0][0] if letters else None
+    elif LAST_ROUND_VOTE:                                  # "last_commit" or "last_speaker", repaired
+        final = last_round_vote(rounds, n)
+    elif read == "last_speaker":
+        final = D.final_letter("last", rounds, n) if rounds else None
     else:                                                  # "last_commit"
         letters = SF.committed_letters(rounds, n)
         final = letters[-1] if letters else None
-    gold = row.get("answer_letter")
+    if not grade:
+        correct = None
+    elif GRADER is not None:
+        correct = final is not None and GRADER(row, final)
+    else:
+        correct = final is not None and final == row.get("answer_letter")
     return {"qid": qid, "letter": final,
-            "correct": final is not None and final == gold,
-            "actions": actions,
-            "n_calls": sum(D.turn_cost(s["personas"]) for s in specs)}
+            "correct": correct,
+            "actions": actions, "fired": fired,
+            "tokens": tokens if count_tokens else None,
+            "n_calls": sum(D.spec_cost(s) for s in specs),
+            "capped": capped}
 
 
 # --- experiment B and the fixed recipe, expressed as programs ---------------
@@ -519,12 +638,11 @@ def drop_eliminator() -> None:
                          | {round_kind(s) for s in B.MASTER_ROUNDS})
 
 
-def add_deep_think() -> None:
-    """Add the deep-think move to the action menu for this process (see
-    debate_mcq: one speaker with the model's highest reasoning setting and no
-    reply cap; one such turn counts as debate_mcq.DEEP_COST turns). Use
-    program_space.configure_executor, which also switches the persona on."""
-    ACTIONS[D.DEEP_PERSONA] = [{"personas": [D.DEEP_PERSONA], "sees": "all"}]
+def set_actions(actions: dict[str, list[dict]]) -> None:
+    """Replace the whole move menu for this process (the v3 grammar:
+    program_space.use_v3_grammar)."""
+    ACTIONS.clear()
+    ACTIONS.update(actions)
     global ROUND_KINDS
     ROUND_KINDS = sorted({round_kind(s) for specs in ACTIONS.values() for s in specs}
                          | {round_kind(s) for s in B.MASTER_ROUNDS})
@@ -1089,7 +1207,7 @@ if __name__ == "__main__":
                     help="Also write every scored program with its per-question "
                          "train outcomes, letters, calls and action paths to this "
                          "jsonl (first line: the split and per-question features).")
-    ap.add_argument("--dataset", type=Path, default=Path("datasets/supergpqa_strict_train.json"))
+    ap.add_argument("--dataset", type=Path, default=Path("datasets/supergpqa_600_train.json"))
     ap.add_argument("--records", type=Path, default=Path("outputs/adaptive_debate_records.jsonl"))
     ap.add_argument("--summary", type=Path, default=Path("outputs/adaptive_debate_summary.json"))
     ap.add_argument("--cache", type=Path, default=Path("outputs/adaptive_rounds_cache.jsonl"))

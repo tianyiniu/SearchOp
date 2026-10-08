@@ -254,7 +254,7 @@ def main(args):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--dataset", type=Path, default=Path("datasets/supergpqa_strict_train.json"))
+    ap.add_argument("--dataset", type=Path, default=Path("datasets/supergpqa_600_train.json"))
     ap.add_argument("--bestofn-cache", type=Path, default=Path("outputs/bestofn_strict_cache.jsonl"))
     ap.add_argument("--batch", type=int, default=None, help="First N of the seeded shuffle; default all.")
     ap.add_argument("--rep", type=int, default=0)

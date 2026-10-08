@@ -20,9 +20,11 @@ A schema is the same tiny structure as the FRAMES version:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
+import urllib.request
 from collections import Counter
 from copy import deepcopy
 
@@ -40,6 +42,13 @@ ANSWER_INSTR_V2 = ("Think this through carefully before you answer: work out wha
                    "the facts or calculations your choice depends on, and consider what "
                    "would change your mind. Take the space you need. Then end with exactly "
                    "one line: 'ANSWER: <letter>'.")
+# The plain instruction (off by default; set_plain_instruction): only the commitment line,
+# with no request to think longer. How long a speaker thinks is then set by the effort
+# sent with the request alone. Measured on Qwen3.5-9B (global-pipeline run1, test): the V2 sentence
+# made a high-effort solver think 1.5x longer than SuperGPQA's plain prompt (median),
+# and run out of the window on 3.6% of calls, at no gain in accuracy.
+ANSWER_INSTR_PLAIN = "End with exactly one line: 'ANSWER: <letter>'."
+PLAIN_INSTR = False
 ANSWER_INSTR = ANSWER_INSTR_V1
 
 # Visible reasoning (off by default; nothing changes for any model unless it is
@@ -51,9 +60,17 @@ ANSWER_INSTR = ANSWER_INSTR_V1
 # reasoning still gets the summary call, and the round cache key carries g=1.
 # No braces in the sentence: it passes through EXPERT_TMPL.format().
 VISIBLE_REASONING = False
-VISIBLE_SENTENCE = (" Your reply is read by other participants who cannot see your private "
-                    "thinking, so write your reasoning out in the reply itself (the key facts "
-                    "or steps, and why the rival options fail) before the ANSWER line.")
+VISIBLE_SENTENCE_BRIEF = (" Your reply is read by future participants who cannot see your private "
+                          "thinking, so write your reasoning out in the reply itself (the key facts "
+                          "or steps, and why the other options are wrong) before the ANSWER line.")
+# The fuller request, for the reply-instruction probe (archive/scripts/probe_executor_v3.py). Content only, no
+# target length. It becomes the default only if the probe shows longer replies at no accuracy cost.
+VISIBLE_SENTENCE_DETAILED = (" Your reply is read by future participants who cannot see your private "
+                             "thinking, so write your reasoning out in the reply itself before the ANSWER "
+                             "line: the decisive facts or steps in the order you used them, the numbers of "
+                             "any calculation, which options you ruled out and why, and the point you are "
+                             "least sure of.")
+VISIBLE_SENTENCE = VISIBLE_SENTENCE_BRIEF
 VISIBLE_MIN_CHARS = 80            # under visible reasoning, a shorter reply is not its own summary
 
 
@@ -66,12 +83,186 @@ _ANS = re.compile(r"ANSWER\s*:\s*\(?\s*([A-J])\b", re.I)
 
 
 def extract_letter(text: str, n_options: int) -> str | None:
-    """The letter from the last 'ANSWER:' line, or None if there is no valid one."""
+    """The letter from the last 'ANSWER:' line, or None if there is no valid one.
+    With open answers on (set_open_answers), the normalised answer of the last
+    ANSWER line instead, whatever `n_options` is: every reader of a commitment
+    (votes, agreement, the rules, the final read) goes through here."""
+    if OPEN:
+        found = _math_found(text) if MATH else open_answers(text)
+        return found[-1] if found else None
     for m in reversed(_ANS.findall(text or "")):
         letter = m.upper()
         if 0 <= LETTERS.index(letter) < n_options:
             return letter
     return None
+
+
+# --- open answers (HLE) ---------------------------------------------------------------
+# Off by default: nothing changes for the multiple-choice datasets. With it on, a speaker's
+# commitment is the whole of its last line 'ANSWER: <answer>', in the fixed format that
+# ANSWER_FORMAT asks for, and the commitment's identity (for votes, agreement and the rules)
+# is that answer after normalize_answer. Grading is not done here: a judge model compares the
+# final answer with the key (judge_answers.py, set up by program_space.configure_from_args).
+# It changes every prompt, so it is part of the round cache key ("o").
+
+OPEN = False
+# No braces anywhere below: these texts pass through EXPERT_TMPL.format().
+ANSWER_FORMAT = ("Put the final answer alone on that line, with nothing else: for a question with answer "
+                 "choices, only the letter of your choice, as in ANSWER: C; otherwise the answer in its "
+                 "simplest exact form, such as an integer, a fraction a/b, a decimal, an expression in plain "
+                 "LaTeX without dollar signs, or a word or short phrase, with no explanation and no "
+                 "trailing period.")
+ANSWER_INSTR_OPEN = ("Think this through carefully before you answer: work out what the question is really "
+                     "asking, check the facts, derivations or calculations your answer depends on, and "
+                     "consider what would change your mind. Take the space you need. Then end with exactly "
+                     "one line: 'ANSWER: <final answer>'. " + ANSWER_FORMAT)
+ANSWER_INSTR_OPEN_PLAIN = "End with exactly one line: 'ANSWER: <final answer>'. " + ANSWER_FORMAT
+VISIBLE_SENTENCE_OPEN = (" Your reply is read by future participants who cannot see your private thinking, "
+                         "so write your reasoning out in the reply itself (the key facts or steps, and why "
+                         "the alternatives fail) before the ANSWER line.")
+# an ANSWER line: the label at the start of a line (markdown around it allowed), then the answer
+_ANS_OPEN = re.compile(r"^[ \t>*#`-]*ANSWER[ \t*]*:(.*)$", re.I | re.M)
+_WRAPPERS = (("$$", "$$"), ("$", "$"), ("\\(", "\\)"), ("\\[", "\\]"), ("`", "`"))
+_WRAPPER_CMDS = re.compile(r"\\(?:boxed|text|textbf|mathrm)\{(.*)\}", re.S)
+# MATH answers keep a \\text{...}: math-verify reads '\\text{C,E}' and 'C,E' as different answers, and
+# grading must read what the speaker wrote (math_answers.key drops the wrapper when math-verify agrees)
+_WRAPPER_CMDS_MATH = re.compile(r"\\boxed\{(.*)\}", re.S)
+
+
+def _balanced(s: str) -> bool:
+    depth = 0
+    for ch in s:
+        depth += (ch == "{") - (ch == "}")
+        if depth < 0:
+            return False
+    return depth == 0
+
+
+def normalize_answer(text: str | None, _cmds: re.Pattern = _WRAPPER_CMDS) -> str | None:
+    """An answer's identity: the text with only its formatting removed -- runs of
+    two or more asterisks at the ends (markdown bold, whole or left over from a bold
+    label; a single '*' is kept, it can be notation), a wrapping `...`, $...$,
+    \\(...\\) or \\[...\\], a wrapping \\boxed{...} or \\text{...}, a single-letter
+    choice's '(C)' / 'C)' / 'C.', one trailing period, \\displaystyle / \\textstyle,
+    repeated whitespace. Case is
+    kept (in SMILES it matters). Idempotent: normalizing a normalized answer returns
+    it unchanged. None if nothing is left. (MATH answers pass _WRAPPER_CMDS_MATH: only a
+    wrapping \\boxed{...} is removed of the commands.)"""
+    a, prev = (text or "").strip(), None
+    while a != prev:
+        prev = a
+        a = re.sub(r"^\*{2,}|\*{2,}$", "", a.strip()).strip()
+        for left, right in _WRAPPERS:
+            inner = a[len(left):len(a) - len(right)]
+            if a.startswith(left) and a.endswith(right) and inner.strip() and left not in inner:
+                a = inner.strip()                  # '$x$ and $y$' is not one wrapped answer
+        if (m := _cmds.fullmatch(a)) and _balanced(m.group(1)):
+            a = m.group(1).strip()
+        if (m := re.fullmatch(r"\(?([A-Z])[).]?", a)) and a != m.group(1):
+            a = m.group(1)
+        if a.endswith(".") and not a.endswith(".."):
+            a = a[:-1].rstrip()
+        a = re.sub(r"\\(?:displaystyle|textstyle)\b\s*", "", a).strip()    # LaTeX size, not content
+    a = re.sub(r"\s+", " ", a).strip()
+    return a or None
+
+
+def open_answers(text: str | None) -> list[str]:
+    """The normalised answers of every ANSWER line in `text`, in order (lines
+    whose answer is empty are skipped)."""
+    return [a for m in _ANS_OPEN.findall(text or "") if (a := normalize_answer(m)) is not None]
+
+
+def set_open_answers(on: bool) -> None:
+    """Use program_space.configure_executor (--answers open) from entry scripts,
+    which also switches the critic override and the grader."""
+    global OPEN
+    OPEN = bool(on)
+    _rebuild_prompts()
+
+
+def open_signature() -> str | None:
+    """'1' with open answers on ('m' with MATH answers), else None. Part of the cache key."""
+    return "m" if MATH else "1" if OPEN else None
+
+
+# --- MATH answers (--answers math; off by default, 2026-10-07) -------------------------------------
+# Open answers (OPEN is on too) to MATH questions. A speaker gives its answer in \boxed{...} (MATH's own
+# format) or on an ANSWER line (what the summary and letter follow-ups ask for); the last one in its
+# text counts. An answer is read as its key (math_answers.key): two answers are the same answer when
+# math-verify says so, and the key is what votes, rules and later speakers see. A final answer is
+# graded by math-verify (math_answers.grade_row), as the external baselines grade it. The solver's user
+# message is the external direct baseline's request (baselines/tasks.py): the question, then
+# MATH_INSTRUCTION; the other speakers are asked for the same \boxed{} answer. It changes every
+# prompt, so it is part of the round cache key ("o": "m") and of the prompt signature.
+MATH = False
+MATH_INSTRUCTION = "Please reason step by step, and put your final answer within \\boxed{}."
+ANSWER_INSTR_MATH = ("Think this through carefully before you answer: work out what the question is really "
+                     "asking, check the derivations or calculations your answer depends on, and consider "
+                     "what would change your mind. Take the space you need. Then put your final answer "
+                     "within \\boxed{}.")
+ANSWER_INSTR_MATH_PLAIN = "Put your final answer within \\boxed{}."
+VISIBLE_SENTENCE_MATH = (" Your reply is read by future participants who cannot see your private thinking, "
+                         "so write your reasoning out in the reply itself (the key steps, and why the "
+                         "alternatives fail) before your final answer.")
+COMMIT_NUDGE_MATH = ("STOP. You ran out of space. Do not continue or summarize the derivation. Your reply "
+                     "must BEGIN with the line 'ANSWER: <final answer>', giving the final answer the "
+                     "reasoning so far supports, in its simplest exact form. You may add one short "
+                     "sentence after that line, nothing more.")
+
+
+def set_math_answers(on: bool) -> None:
+    """Use program_space.configure_executor (--answers math) from entry scripts, which also turns on
+    open answers, switches the critic override and sets the grader."""
+    global MATH
+    MATH = bool(on)
+    _rebuild_prompts()
+
+
+def math_question(question: str) -> str:
+    """The external direct baseline's request for a MATH question (baselines/tasks.messages)."""
+    return f"{question}\n{MATH_INSTRUCTION}"
+
+
+def _boxed_answers(text: str) -> list[tuple[int, str | None]]:
+    """(position, content) of every \\boxed and \\fbox in `text`, by MATH's own rule
+    (baselines/tasks.last_boxed, applied to each one): the content of its balanced braces; '\\boxed 5'
+    gives the rest of its line up to a '$'. None for one with neither, or left open (a reply cut off
+    inside it): as there, such a last box gives no answer."""
+    out: list[tuple[int, str | None]] = []
+    for m in re.finditer(r"\\(boxed|fbox)", text or ""):
+        rest, a = text[m.end():], None
+        if rest.startswith(" "):
+            a = rest.split("\n")[0].split("$")[0].strip() or None
+        elif rest.startswith("{"):
+            depth = 0
+            for i, ch in enumerate(rest):
+                depth += (ch == "{") - (ch == "}")
+                if depth == 0:
+                    a = rest[1:i].strip() or None
+                    break
+        out.append((m.start(), a))
+    return out
+
+
+def _math_found(text: str | None) -> list[str | None]:
+    """Every answer in `text` in the order it appears (each \\boxed and each ANSWER line), as its key
+    (math_answers.key, of the answer as normalize_answer leaves it, a \\text{} kept); None for a box
+    that gives none."""
+    import math_answers as MA
+    found = [(m.start(), m.group(1)) for m in _ANS_OPEN.finditer(text or "")] + _boxed_answers(text or "")
+    found.sort(key=lambda t: t[0])
+    keys = []
+    for _, raw in found:
+        a = normalize_answer(raw, _WRAPPER_CMDS_MATH) if raw is not None else None
+        if a is not None or raw is None:          # an ANSWER line with nothing on it is skipped
+            keys.append(MA.key(a) if a is not None else None)
+    return keys
+
+
+def math_answers(text: str | None) -> list[str]:
+    """The keys of every answer in `text`, in order (_math_found without the boxes that give none)."""
+    return [k for k in _math_found(text) if k is not None]
 
 
 # --- token accounting -------------------------------------------------------------
@@ -187,11 +378,17 @@ COMMIT_FOLLOWUP = False
 # First version of the nudge asked for "exactly one line"; 68% of replies began
 # a prose summary instead and were cut off at a 48-token budget. This one puts
 # the letter FIRST, allows a short justification after it, and gives room.
-COMMIT_NUDGE = ("STOP. You ran out of space. Do not continue or summarize the derivation. "
-                "Your reply must BEGIN with the line 'ANSWER: X', where X is the single "
-                "option letter you choose based on the reasoning so far. You may add one "
-                "short sentence after that line, nothing more.")
-COMMIT_MARK = "\n\n[cut off; asked to commit]\n"
+COMMIT_NUDGE_LETTER = ("STOP. You ran out of space. Do not continue or summarize the derivation. "
+                       "Your reply must BEGIN with the line 'ANSWER: X', where X is the single "
+                       "option letter you choose based on the reasoning so far. You may add one "
+                       "short sentence after that line, nothing more.")
+COMMIT_NUDGE_OPEN = ("STOP. You ran out of space. Do not continue or summarize the derivation. Your reply "
+                     "must BEGIN with the line 'ANSWER: <final answer>', giving the final answer the "
+                     "reasoning so far supports, in the required format (for a question with answer "
+                     "choices, only the letter). You may add one short sentence after that line, nothing "
+                     "more.")
+COMMIT_NUDGE = COMMIT_NUDGE_LETTER           # _rebuild_prompts picks by the answer mode
+COMMIT_MARK = "\n\n[cut off; asked for its answer]\n"
 COMMIT_MAX_TOKENS = 160
 
 # A commit reply is a direct answer to "which letter", so reading a letter out of
@@ -206,7 +403,10 @@ _COMMIT_PATS = (
 
 
 def commit_letter_lenient(text: str, n_options: int) -> str | None:
-    """The letter a commit reply names, or None."""
+    """The letter a commit reply names, or None. With open answers, only an
+    ANSWER line counts (there is no letter to spot in prose)."""
+    if OPEN:
+        return extract_letter(text, n_options)
     for pat in _COMMIT_PATS:
         for m in reversed(pat.findall(text or "")):
             letter = m.upper()
@@ -295,17 +495,20 @@ def chat_commit(client, model: str, system: str, user: str, temperature: float,
 
 V2 = False
 SUMMARY_MARK = "\n\n[v2 summary for later speakers]\n"
-SUMMARY_NUDGE = ("Now write a brief summary of your reasoning for the other participants, "
+SUMMARY_NUDGE = ("Now write a brief summary of your reasoning for future participants, "
                  "in at most 120 words: the decisive facts or steps, the options you ruled "
                  "out and why, and the point you are least sure of. Do not add new analysis. "
                  "End with exactly one line 'ANSWER: X' -- the same letter you chose above. "
-                 "If you did not commit above, commit now.")
+                 "If you gave no answer above, give one now.")
 SUMMARY_MAX_TOKENS = 320          # <=120 words + the ANSWER line; conclusions ran 60-120 tokens
 V2_SHORT_CHARS = 800              # a reply this short that already commits is its own summary
 on_summary = None                 # callable(); a runner sets it to account for the extra call
 
 V2_STATS: dict[str, int] = {"summaries": 0, "skipped_short": 0, "disagreements": 0,
-                            "recovered_commits": 0, "failed_summaries": 0}
+                            "recovered_commits": 0, "failed_summaries": 0,
+                            # v3 only: a summary that named another letter (not used), a letter
+                            # obtained by the commit prompt, a reply left with no letter at all
+                            "rejected_summaries": 0, "nudged_commits": 0, "uncommitted": 0}
 _stats_lock = threading.Lock()
 
 
@@ -341,7 +544,7 @@ def set_summary_words(n: int) -> None:
     SUMMARY_NUDGE = (_SUMMARY_NUDGE_120
                      .replace("a brief summary", "a comprehensive summary")
                      .replace("in at most 120 words: the decisive facts or steps,",
-                              f"in at most {n} words. The other participants see ONLY this summary, never "
+                              f"in at most {n} words. Future participants see ONLY this summary, never "
                               f"your full reasoning, so make it complete enough that a reader could follow "
                               f"and check your whole argument from it; use the space you need. Cover: the "
                               f"decisive facts or steps in the order you used them, every calculation with "
@@ -357,106 +560,169 @@ def summary_signature() -> int | None:
     return None if SUMMARY_WORDS == 120 else SUMMARY_WORDS
 
 
-# --- the deep-think speaker -----------------------------------------------------
-# One speaker that is given room to think: the model's highest reasoning
-# setting and no reply cap, so the server lets it use whatever is left of the
-# context window after the prompt. Every other speaker keeps the short budget.
-# Off unless set_deep_think(True): the persona prompt, the move and the plan
-# round only exist when it is on, so nothing changes for a run without it.
-#
-# Its thinking arrives in the reply's reasoning field and is NOT stored (it runs
-# to ~10k tokens a call). What is stored is the visible reply plus the summary,
-# and the summary call is shown the end of the thinking so it can report it.
-
-DEEP_THINK = False
-DEEP_PERSONA = "deep_think"
-DEEP_PROMPT = ("You are a Deep Thinker answering a hard graduate-level multiple-choice question. "
-               "You have as much room as you need. Think long and hard before you answer: work the "
-               "problem from first principles, test every option against the exact wording of the "
-               "question, re-derive any result you are not sure of by a second route, and look for "
-               "the mistake you are most likely to have made. If earlier answers are shown, treat "
-               "them as claims to check, not as evidence. Only then commit. ")
-# both families' switches in one request: gpt-oss reads reasoning_effort, the
-# Qwen chat template reads enable_thinking, and each ignores the other's
-DEEP_EXTRA = {"reasoning_effort": "high", "chat_template_kwargs": {"enable_thinking": True}}
-# The runner's clients give up on a request after 900 s and then send it again from the start.
-# A deep-think turn that uses the whole window (30k tokens) took 810 s on a busy gpt-oss server
-# (37 tokens/s per request), so it gets its own, longer limit.
-DEEP_TIMEOUT = 3600.0
-DEEP_THINKING_TAIL = 16000        # characters of thinking shown to the summary call (its end)
-DEEP_COST = 5                     # speaker turns one deep-think turn counts as: the reasoning-high
-                                  # direct baseline averaged 9.9k tokens a call, an ordinary reply ~2k
-DEEP_STATS: dict[str, int] = {"calls": 0, "no_visible_reply": 0}
+# Two settings kept from the deep-think speaker (a v2-only option, removed 2026-10-06), with their
+# values unchanged: how much of a reply's hidden reasoning the summary call is shown, and the turns
+# one high-effort speaker counts unless --high-cost says otherwise.
+THINKING_TAIL = 16000             # characters of thinking shown to the summary call (its end)
+DEFAULT_HIGH_COST = 5             # the reasoning-high direct baseline averaged 9.9k tokens a call,
+                                  # an ordinary reply ~2k
 
 
-def set_deep_think(on: bool) -> None:
-    """Use program_space.configure_executor from entry scripts, which also adds
-    the move and the plan round."""
-    global DEEP_THINK
-    DEEP_THINK = bool(on)
+# --- the judge speaker (v3 only) ------------------------------------------------------------
+# A speaker that chooses among the answers already committed. It sees the debate as any seeing
+# speaker does, plus the list of candidate answers (every distinct answer committed so far), and
+# is told that how many chose an answer is not evidence. It may not propose an answer of its own:
+# a pick outside the list gets one low-effort prompt to choose from the list (judge_pick_nudge);
+# if that fails too, its own answer stands (counted in JUDGE_STATS["off_list"]). With no answer
+# committed yet it answers the question itself. Off unless set_judge_persona(True): the prompt,
+# the plan rounds and the moves exist only then, so nothing changes for a run without it. Its
+# rounds have keys of their own (the persona is in the key), so no other recording changes.
+
+JUDGE_ON = False
+JUDGE_PERSONA = "judge"
+JUDGE_PROMPT = ("You are a Judge. Earlier participants have answered this question; their answers and "
+                "the reasoning behind them are shown, followed by the list of candidate answers. Decide "
+                "which candidate is correct. Judge each one by the strength of its reasoning against the "
+                "exact wording of the question: check its decisive facts, steps and calculations, and "
+                "find the specific error in every candidate you reject. How many participants chose an "
+                "answer is not evidence that it is correct. You must choose one of the listed "
+                "candidates; do not propose a different {what}. ")
+JUDGE_MARK = "\n\n[judge: asked to choose one of the candidates]\n"
+JUDGE_STATS: dict[str, int] = {"calls": 0, "no_candidates": 0, "repicked": 0, "off_list": 0}
+
+
+def set_judge_persona(on: bool) -> None:
+    """Use program_space.configure_executor (--judge-persona) from entry scripts, which also
+    adds the judge's plan rounds and moves."""
+    global JUDGE_ON
+    JUDGE_ON = bool(on)
     _rebuild_prompts()
 
 
-def turn_cost(personas) -> int:
-    """Speaker turns a round counts as (a deep-think turn counts DEEP_COST)."""
-    return sum(DEEP_COST if p == DEEP_PERSONA else 1 for p in personas)
+def judge_candidates(all_rounds: list[list[tuple[str, str]]], n: int) -> list[str]:
+    """The distinct answers committed so far, in the order they first appeared."""
+    return list(dict.fromkeys(l for rnd in all_rounds for p, r in rnd
+                              if p not in NON_ANSWERING and (l := extract_letter(r, n))))
 
 
-def chat_deep(client, model: str, system: str, user: str, temperature: float) -> tuple[str, str]:
-    """(thinking, visible reply) of one deep-think call. No max_tokens: the
-    server then allows everything left in its window after the prompt."""
-    resp = client.chat.completions.create(
-        model=model, messages=[{"role": "system", "content": system},
-                               {"role": "user", "content": user}],
-        temperature=temperature, extra_body=DEEP_EXTRA, timeout=DEEP_TIMEOUT)
-    _count_tokens(resp)
-    msg = resp.choices[0].message
-    thinking = (getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None) or "").strip()
-    return thinking, (getattr(msg, "content", None) or "").strip()
+def judge_block(cands: list[str]) -> str:
+    """The candidate list shown to a judge after the debate."""
+    if not cands:
+        return ("No answer has been given yet, so there is nothing to choose between: answer the "
+                "question yourself.")
+    if OPEN:
+        return ("Candidate answers (every distinct answer given so far):\n"
+                + "\n".join(f"- {c}" for c in cands)
+                + "\nChoose exactly one of them, and write it on the ANSWER line exactly as it appears here.")
+    return (f"Candidate answers (every distinct letter given so far): {', '.join(cands)}. "
+            f"Choose exactly one of them.")
 
 
-def chat_v2_deep(client, model: str, system: str, user: str, temperature: float,
-                 n_options: int) -> str:
-    """The deep-think turn under v2: the long call, then the usual summary call
-    with the end of the thinking put in front of the visible reply, then the
-    usual reconciliation. A call that ran out of room before it answered has no
-    visible reply; the summary call is then its chance to commit, as it is for
-    any cut-off reply."""
-    thinking, visible = chat_deep(client, model, system, user, temperature)
+def judge_pick_nudge(cands: list[str]) -> str:
+    """The follow-up for a judge whose answer is not one of the candidates."""
+    if OPEN:
+        return ("Your answer must be one of the candidate answers:\n" + "\n".join(f"- {c}" for c in cands)
+                + "\nBased on your reasoning above, reply with only the line 'ANSWER: <candidate>' for the "
+                  "candidate it supports, written exactly as listed.")
+    return (f"Your answer must be one of the candidate letters: {', '.join(cands)}. Based on your reasoning "
+            f"above, reply with only the line 'ANSWER: X' for the candidate it supports.")
+
+
+def judge_restrict(client, model: str, system: str, user: str, text: str, cands: list[str],
+                   n_options: int) -> str:
+    """A judge's stored reply with its answer kept to the candidates: unchanged when it
+    already names one (or there are none); else one low-effort pick prompt, whose answer is
+    appended (JUDGE_MARK + an ANSWER line, which readers take as the last one) if it names a
+    candidate. Otherwise the reply stands as it is. Never raises."""
     with _stats_lock:
-        DEEP_STATS["calls"] += 1
-        DEEP_STATS["no_visible_reply"] += not visible
-    if not (thinking or visible):
-        return ""
-    tail = thinking[-DEEP_THINKING_TAIL:]
-    shown = (f"[the end of my private reasoning]\n{tail}\n\n[my reply]\n{visible}" if tail else visible)
-    full = visible or "(no reply: the reasoning ran out of room)\n" + thinking[-2000:]
-    summary = summarize_reply(client, model, system, user, shown, temperature)
-    if not summary:
-        _bump("failed_summaries")
-        return full
-    _bump("summaries")
-    return _reconcile(full, summary, n_options)
+        JUDGE_STATS["calls"] += 1
+        if not cands:
+            JUDGE_STATS["no_candidates"] += 1
+    if not cands or extract_letter(text, n_options) in cands:
+        return text
+    pick = _followup_v3(client, model, system, user, text or "(no reply)", judge_pick_nudge(cands),
+                        COMMIT_TOKENS_V3)
+    if pick and on_followup is not None:
+        on_followup()
+    got = extract_letter(pick, n_options) or commit_letter_lenient(pick, n_options)
+    with _stats_lock:
+        JUDGE_STATS["repicked" if got in cands else "off_list"] += 1
+    return text + JUDGE_MARK + f"ANSWER: {got}" if got in cands else text
+
+
+def turn_cost(personas) -> int:
+    """Speaker turns a round of low-effort speakers counts as: one per speaker."""
+    return len(list(personas))
+
+
+# The solver's system prompt: a general one (2026-10-06), with SOLVER_STEP added on a high-effort
+# call (thinking on) and SOLVER_EXPLAIN on every call. Under v3 with multiple choice its user message is SuperGPQA's own prompt
+# (official_question), so the solver gets the request of the external direct baseline plus this
+# system prompt. Until 2026-10-06 the solver was "You are a Solver answering a hard graduate-level
+# multiple-choice question. Reason step by step from your own knowledge, then ..." with the answer
+# instruction.
+SOLVER_SYSTEM = ("You are a helpful assistant with broad expert knowledge. You answer hard questions from "
+                 "every field of study accurately, using your own knowledge. Read each question carefully "
+                 "before you answer.")
+SOLVER_STEP = " Think step by step."
+# The reply must carry the reasoning: on a low-effort call (thinking off) a short reply is shown to later
+# speakers as it is, and on a high-effort call the summary later speakers read sees only the end of
+# the thinking (the last 16,000 characters; Qwen3.5-9B's thinking ran longer in 63% of its Direct CoT
+# replies) besides the reply. This is the sentence the external baselines use to ask for it
+# (baselines/tasks.py, EXPLAIN_SENTENCE).
+SOLVER_EXPLAIN = " Explain your reasoning in your response before you give the final answer."
+
+
+# The expert reasons step by step only on a high-effort call (user, 2026-10-06); on a low-effort call
+# that sentence is EXPERT_LOW instead (speaker_system).
+EXPERT_STEP = "Reason step by step from your expert knowledge of the field."
+EXPERT_LOW = "Answer from your expert knowledge of the field."
+
+
+def solver_system(system: str, effort: str) -> str:
+    """A solver's system prompt for one call: `system` (SOLVER_SYSTEM, or a per-question override),
+    with SOLVER_STEP added on a high-effort call, then SOLVER_EXPLAIN on every call."""
+    return system + (SOLVER_STEP if effort == "high" else "") + SOLVER_EXPLAIN
+
+
+def speaker_system(persona: str, system: str, effort: str) -> str:
+    """The system prompt of one call: the solver's by solver_system; the expert's with EXPERT_STEP
+    replaced by EXPERT_LOW on a low-effort call; every other persona's as it is."""
+    if persona == OFFICIAL_PERSONA:
+        return solver_system(system, effort)
+    if persona == "expert" and effort != "high":
+        return system.replace(EXPERT_STEP, EXPERT_LOW)
+    return system
+# The critic reads the whole discussion, not only the leading answer (2026-10-06; it replaced both
+# the original critic and the E7 critic of schema_fitness, which challenged the leading answer).
+CRITIC_BODY = (
+    "You are a Critic. Read the whole discussion so far: the reasoning and the answer of every speaker "
+    "in every round. Check each line of reasoning for errors: wrong facts, misapplied rules or formulas, "
+    "calculation mistakes, unstated assumptions, overlooked constraints, and options that were rejected "
+    "without a good reason. Do not prefer an answer because more speakers gave it. Then give the answer "
+    "that the reasoning best supports, and explain why. ")
+CRITIC_BODY_OPEN = CRITIC_BODY.replace("and options that were rejected", "and answers that were rejected")
 
 
 def _build_prompts(instr: str) -> tuple[str, dict[str, str]]:
     """The expert template and the persona system prompts, built around one
-    commitment instruction. Called at import (v1) and by set_v2."""
+    answer instruction. Called at import (v1) and by set_v2. No prompt uses the
+    word 'commit' (2026-10-06)."""
+    if OPEN:
+        return _build_prompts_open(instr)
     expert = ("You are a leading expert in {field}, answering a hard graduate-level "
-              "multiple-choice question inside your own specialty. Reason step by step "
-              "from your expert knowledge of the field, then commit. " + instr +
+              "multiple-choice question inside your own specialty. " + EXPERT_STEP + " Explain your "
+              "reasoning in your response before you give the final answer. " + instr +
               " Always choose exactly one letter; never abstain.")
     prompts = {
-        "solver": ("You are a Solver answering a hard graduate-level multiple-choice "
-                   "question. Reason step by step from your own knowledge, then commit. "
-                   + instr + " Always choose exactly one letter; never abstain."),
-        "critic": ("You are a Critic. Examine the prior answers and their reasoning for a "
-                   "flaw — a wrong deduction, a miscalculation, a misread option, an "
-                   "overlooked constraint. Give the corrected choice with your reasoning. "
-                   + instr),
+        # a general system prompt: under v3 the solver's user message is the dataset's own prompt
+        # (SUPERGPQA_PROMPT), the request of the external direct baseline
+        "solver": SOLVER_SYSTEM,
+        "critic": CRITIC_BODY + instr + " Always choose exactly one letter; never abstain.",
         "synthesizer": ("You are a Synthesizer. Weigh the prior answers and their "
-                        "reasoning, resolve the disagreements, and commit to the single "
-                        "best option. You MUST choose exactly one letter. " + instr),
+                        "reasoning, resolve the disagreements, and choose the single "
+                        "best option. Explain your choice in your response. You MUST choose "
+                        "exactly one letter. " + instr),
         "contrarian": ("You are a Contrarian. The standing answer is probably wrong. Build the "
                        "strongest positive case for a DIFFERENT option: find the reading of the "
                        "question, or the piece of knowledge, under which another option is the "
@@ -468,17 +734,56 @@ def _build_prompts(instr: str) -> tuple[str, dict[str, str]]:
                        "'SURVIVING: <letters>'. Never write an 'ANSWER:' line."),
         "independent": ("You are an Independent Solver working alone on a hard graduate-level "
                         "multiple-choice question. Reason step by step from your own knowledge "
-                        "and commit. " + instr + " Always choose exactly one letter."),
+                        "and give your answer. " + instr + " Always choose exactly one letter."),
         "verifier": ("You are a Verifier. Do not re-derive the solution from scratch. Take each "
-                     "answer letter committed so far and test it directly against the exact "
+                     "answer given so far and test it directly against the exact "
                      "wording of the question: does that option satisfy every requirement the "
-                     "question states? Test the strongest rival option the same way. Keep the "
-                     "answer that survives these checks; switch if it does not. " + instr +
-                     " Always choose exactly one letter; never abstain."),
+                     "question states? Test the most likely other option the same way. Keep the "
+                     "answer if it satisfies every requirement; otherwise change to the option that "
+                     "does. Show each check in your response. " + instr
+                     + " Always choose exactly one letter; never abstain."),
         "expert": expert.format(field="the question's field"),
     }
-    if DEEP_THINK:
-        prompts[DEEP_PERSONA] = DEEP_PROMPT + instr + " Always choose exactly one letter; never abstain."
+    if JUDGE_ON:
+        prompts[JUDGE_PERSONA] = (JUDGE_PROMPT.format(what="option") + instr
+                                  + " Always choose exactly one letter; never abstain.")
+    return expert, prompts
+
+
+def _build_prompts_open(instr: str) -> tuple[str, dict[str, str]]:
+    """The personas of _build_prompts for open-answer questions (set_open_answers):
+    the same roles, with 'answer' where they said 'option' or 'letter'."""
+    one = " Always give exactly one final answer; never abstain."
+    expert = ("You are a leading expert in {field}, answering a hard expert-level question inside "
+              "your own specialty. " + EXPERT_STEP + " Explain your reasoning in your response before you "
+              "give the final answer. " + instr.replace("{", "{{").replace("}", "}}") + one)
+    # (the template is filled with .format(field=...): MATH's '\\boxed{}' must not read as a field)
+    prompts = {
+        # a general system prompt; the user message carries the question and the answer format
+        "solver": SOLVER_SYSTEM,
+        "critic": CRITIC_BODY_OPEN + instr + one,
+        "synthesizer": ("You are a Synthesizer. Weigh the prior answers and their reasoning, resolve the "
+                        "disagreements, and give the single best answer. Explain your choice in your "
+                        "response. You MUST give exactly one final answer. " + instr),
+        "contrarian": ("You are a Contrarian. The standing answer is probably wrong. Build the strongest "
+                       "positive case for a DIFFERENT answer: find the reading of the question, or the "
+                       "piece of knowledge, under which another answer is the correct one. You may not "
+                       "endorse the standing answer. " + instr),
+        "eliminator": ("You are an Eliminator. Do NOT answer the question. Work through the candidate "
+                       "answers and rule out the ones that cannot be correct, giving a specific reason for "
+                       "each. End with a line listing the candidates that survive: 'SURVIVING: <list>'. "
+                       "Never write an 'ANSWER:' line."),
+        "independent": ("You are an Independent Solver working alone on a hard expert-level question. "
+                        "Reason step by step from your own knowledge and give your answer. " + instr + one),
+        "verifier": ("You are a Verifier. Do not re-derive the solution from scratch. Take each answer "
+                     "given so far and test it directly against the exact wording of the question: "
+                     "does it satisfy every requirement the question states? Test the most likely other "
+                     "answer the same way. Keep the answer if it satisfies every requirement; otherwise "
+                     "change to the answer that does. Show each check in your response. " + instr + one),
+        "expert": expert.format(field="the question's field"),
+    }
+    if JUDGE_ON:
+        prompts[JUDGE_PERSONA] = JUDGE_PROMPT.format(what="answer") + instr + one
     return expert, prompts
 
 
@@ -497,29 +802,96 @@ def _rebuild_prompts() -> None:
     """The commitment instruction and every persona prompt, from the current
     V2 and VISIBLE_REASONING switches. With VISIBLE_REASONING off this is
     exactly what set_v2 always built."""
-    global ANSWER_INSTR, EXPERT_TMPL, PERSONA_PROMPTS
-    ANSWER_INSTR = ANSWER_INSTR_V2 if V2 else ANSWER_INSTR_V1
-    if VISIBLE_REASONING:
-        ANSWER_INSTR = ANSWER_INSTR + VISIBLE_SENTENCE
+    global ANSWER_INSTR, EXPERT_TMPL, PERSONA_PROMPTS, COMMIT_NUDGE
+    if OPEN and MATH:
+        ANSWER_INSTR = ((ANSWER_INSTR_MATH_PLAIN if PLAIN_INSTR else ANSWER_INSTR_MATH)
+                        + (VISIBLE_SENTENCE_MATH if VISIBLE_REASONING else ""))
+        COMMIT_NUDGE = COMMIT_NUDGE_MATH
+    elif OPEN:
+        ANSWER_INSTR = ((ANSWER_INSTR_OPEN_PLAIN if PLAIN_INSTR else ANSWER_INSTR_OPEN)
+                        + (VISIBLE_SENTENCE_OPEN if VISIBLE_REASONING else ""))
+        COMMIT_NUDGE = COMMIT_NUDGE_OPEN
+    else:
+        ANSWER_INSTR = ANSWER_INSTR_PLAIN if PLAIN_INSTR else ANSWER_INSTR_V2 if V2 else ANSWER_INSTR_V1
+        if VISIBLE_REASONING:
+            ANSWER_INSTR = ANSWER_INSTR + VISIBLE_SENTENCE
+        COMMIT_NUDGE = COMMIT_NUDGE_LETTER
     EXPERT_TMPL, PERSONA_PROMPTS = _build_prompts(ANSWER_INSTR)
 
 
-def set_visible_reasoning(on: bool) -> None:
+def set_visible_reasoning(on: bool, detailed: bool = False) -> None:
     """Use schema_fitness.set_visible_reasoning from entry scripts, so the
-    per-question critic override changes with the persona prompts."""
-    global VISIBLE_REASONING
+    per-question critic override changes with the persona prompts. `detailed`
+    picks VISIBLE_SENTENCE_DETAILED over the original sentence."""
+    global VISIBLE_REASONING, VISIBLE_SENTENCE
     VISIBLE_REASONING = bool(on)
+    VISIBLE_SENTENCE = VISIBLE_SENTENCE_DETAILED if detailed else VISIBLE_SENTENCE_BRIEF
     _rebuild_prompts()
 
 
+def set_plain_instruction(on: bool) -> None:
+    """The plain commitment instruction (ANSWER_INSTR_PLAIN) in place of the v1/v2 one,
+    for every persona. Use program_space.configure_executor (--plain-instruction) from
+    entry scripts, which also switches the critic override."""
+    global PLAIN_INSTR
+    PLAIN_INSTR = bool(on)
+    _rebuild_prompts()
+
+
+def plain_signature() -> str | None:
+    """'1' with the plain instruction on, else None. Part of the cache key."""
+    return "1" if PLAIN_INSTR else None
+
+
+# --- the solver's user message: the dataset's own prompt -------------------------------------
+# Under v3 with multiple-choice questions, a solver speaker's user message is SuperGPQA's own
+# zero-shot prompt with the question (baselines/tasks.py, PROMPT_TEMPLATE and build_prompt): the
+# request of the external direct baseline, with the general system prompt SOLVER_SYSTEM before it.
+# A solver that sees the discussion gets the same prompt, then the discussion. Measured on
+# Qwen3.5-9B (cluster-pipeline run1, test), a high-effort solver under the earlier Solver prompt used about 1.6
+# times the external direct baseline's tokens (its summary included) and scored about 2 points
+# lower (55.4% against 57.4%). Since 2026-10-06; open answers keep their own user message.
+SUPERGPQA_PROMPT = (
+    "Answer the following multiple choice question. There is only one correct answer. "
+    "The last line of your response should be in the format 'Answer: $LETTER' (without quotes), "
+    "where LETTER is one of A, B, C, D, E, F, G, H, I, or J.\n\n{}\n"
+)
+OFFICIAL_PERSONA = "solver"
+
+
+def official_question(question: str, options: list[str]) -> str:
+    """SuperGPQA's zero-shot prompt for one question, as baselines/tasks.build_prompt writes it."""
+    body = question + "\n" + "\n".join(f"{LETTERS[i]}) {opt}" for i, opt in enumerate(options))
+    return SUPERGPQA_PROMPT.format(body)
+
+
+# --- summary tokens kept apart (off by default; set_summary_split) ---------------------------
+# With it on, a speaker's token tally also records, as "summary", the completion tokens of its
+# answer-locked summary call (the summary of a reply that committed a letter). The round runner
+# keeps them apart, so evolve_program_mcq (--count-read-summaries) can leave out the summary of a
+# speaker that no later speaker read: a summary is only for later speakers, and it never changes the
+# answer. A summary that gives an uncommitted reply its letter is not split off, because the speaker
+# needs it to answer at all. Nothing that a speaker is sent or says changes.
+SUMMARY_SPLIT = False
+
+
+def set_summary_split(on: bool) -> None:
+    """Use program_space.configure_executor (--count-read-summaries) from entry scripts."""
+    global SUMMARY_SPLIT
+    SUMMARY_SPLIT = bool(on)
+
+
 def visible_signature() -> str | None:
-    """'1' when visible reasoning is on, else None. Part of the cache key."""
-    return "1" if VISIBLE_REASONING else None
+    """'1' when visible reasoning is on ('d' with the detailed sentence), else
+    None. Part of the cache key."""
+    if not VISIBLE_REASONING:
+        return None
+    return "d" if VISIBLE_SENTENCE == VISIBLE_SENTENCE_DETAILED else "1"
 
 
 def v2_signature() -> str | None:
-    """'2' when v2 is on, else None. Part of the cache key."""
-    return "2" if V2 else None
+    """'2' when v2 is on, '3' under v3, else None. Part of the cache key."""
+    return "3" if V3 else "2" if V2 else None
 
 
 def _split_summary(text: str) -> tuple[str, str | None]:
@@ -612,6 +984,324 @@ def chat_v2(client, model: str, system: str, user: str, temperature: float,
         return full
     _bump("summaries")
     return _reconcile(full, summary, n_options)
+
+
+# --- v3: effort per round, no reply cap, model-card sampling, answer-locked summaries ----
+# The v2 prompts, with five changes to how each speaker is called:
+#
+#   effort    every round is low or high effort, sent explicitly on every request (gpt-oss:
+#             reasoning_effort; Qwen: thinking off / on), so nothing depends on a server
+#             default. A high-effort speaker counts HIGH_COST turns. It replaced the v2 deep-think speaker.
+#   no cap    a reply may use the whole context window, less its prompt and a reserve kept
+#             for the summary call that follows it (SUMMARY_RESERVE). The summaries keep the
+#             context of later speakers small, so replies do not need a cap of their own.
+#   sampling  each model card's settings for the effort level (SAMPLING). The run's
+#             --temperature is not used.
+#   summary   a committed reply of at most SUMMARY_WORDS words is shown to later speakers as
+#             it is. Otherwise the summary prompt names the reply's letter and forbids changing
+#             it; a summary whose ANSWER line names another letter is not used (later speakers
+#             see the reply). A high-effort reply, or a reply too short to carry any reasoning,
+#             is summarised from the end of its hidden reasoning plus its visible reply.
+#   commit    no reply is left without a letter if it can be helped: an uncommitted reply's
+#             summary prompt asks for the letter FIRST; failing that, COMMIT_NUDGE asks for the
+#             letter alone, and only that answer is read leniently. A letter is never taken
+#             from a summary's prose.
+# v3 is part of the round cache key ("v":"3", and the window as "w").
+
+V3 = False
+EFFORTS = ("low", "high")
+DEFAULT_EFFORT = "low"
+HIGH_COST = DEFAULT_HIGH_COST     # turns one high-effort speaker counts as;
+                                  # program_space.configure_v3 sets it (--high-cost)
+WINDOW = 32768                    # the server's context window (max_model_len); set_v3 sets it
+SUMMARY_RESERVE = 2048            # tokens a reply leaves free: the summary call's prompt adds the
+                                  # nudge (~250 tokens) to the reply, and its output is below
+SUMMARY_TOKENS_V3 = 1792          # the summary call's limit (on gpt-oss it includes its own thinking)
+COMMIT_TOKENS_V3 = 512            # the commit prompt's limit (gpt-oss thinks first even at low effort)
+# A reply's limit needs its prompt's size. The server's own count is used (vLLM's /tokenize with the
+# chat messages: it equalled the billed prompt tokens exactly on gpt-oss), plus a small margin for
+# template differences (Qwen's thinking tags). Only if that cannot be had is the size estimated
+# from characters, below the densest text measured (debate replies and questions: median 4.3
+# characters a token, 5% under 2.45, least 1.77). This matters: an undercount would let a reply eat
+# the room its summary needs. (vLLM 0.18, the version the servers run, refuses a request whose
+# prompt + max_tokens is over its window; _complete then asks once more with the room it reports.)
+CHARS_PER_TOKEN = 1.75
+PROMPT_MARGIN = 64
+REPLY_TIMEOUT = 3600.0            # a whole-window reply on a busy server takes many minutes
+MIN_REPLY_TOKENS = 512
+
+# Model-card sampling per effort. top_k and min_p are vLLM extensions and go in extra_body.
+SAMPLING: dict[str, dict[str, dict]] = {
+    # OpenAI: temperature 1.0, top_p 1.0, whatever the reasoning effort
+    "gpt-oss": {"low": {"temperature": 1.0, "top_p": 1.0},
+                "high": {"temperature": 1.0, "top_p": 1.0}},
+    # Qwen3.5 card: thinking off (reasoning tasks) and thinking on (general)
+    "qwen3.5": {"low": {"temperature": 1.0, "top_p": 1.0, "top_k": 40, "min_p": 0.0, "presence_penalty": 2.0},
+                "high": {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5}},
+}
+
+
+def model_family(model: str) -> str:
+    m = model.lower()
+    if "gpt-oss" in m:
+        return "gpt-oss"
+    if "qwen3.5" in m:
+        return "qwen3.5"
+    raise ValueError(f"no v3 sampling settings for {model!r}; add its family to debate_mcq.SAMPLING")
+
+
+def request_params(model: str, effort: str) -> dict:
+    """The sampling and effort fields of one v3 request, as create() keyword arguments."""
+    if effort not in EFFORTS:
+        raise ValueError(f"effort must be one of {EFFORTS}, got {effort!r}")
+    fam = model_family(model)
+    params = dict(SAMPLING[fam][effort])
+    extra = {k: params.pop(k) for k in ("top_k", "min_p") if k in params}
+    if fam == "gpt-oss":
+        extra["reasoning_effort"] = effort
+    else:
+        extra["chat_template_kwargs"] = {"enable_thinking": effort == "high"}
+    return {**params, "extra_body": extra}
+
+
+def set_v3(on: bool, window: int | None = None) -> None:
+    """Switch the v3 executor on (it keeps the v2 prompts) or off. Use
+    program_space.configure_executor from entry scripts."""
+    global V3, V2, WINDOW
+    V3 = bool(on)
+    if on:
+        V2 = True
+        if window:
+            WINDOW = int(window)
+    _rebuild_prompts()
+
+
+def set_high_cost(n: int) -> None:
+    """The turns one high-effort speaker counts as. Use program_space.configure_executor
+    (--high-cost) from entry scripts. Cost decides which actions fit under the per-question
+    cap, never what a speaker says, so it is not part of the cache key."""
+    global HIGH_COST
+    if int(n) < 1:
+        raise ValueError(f"a high-effort speaker must count as at least 1 turn, not {n}")
+    HIGH_COST = int(n)
+
+
+def window_signature() -> int | None:
+    return WINDOW if V3 else None
+
+
+def spec_cost(spec: dict) -> int:
+    """Speaker turns one round counts as: one per speaker, HIGH_COST for a
+    high-effort speaker."""
+    per = HIGH_COST if spec.get("effort", DEFAULT_EFFORT) == "high" else 1
+    return per * len(spec["personas"])
+
+
+def _est_tokens(messages: list[dict]) -> int:
+    """Conservative size of a prompt from its characters (the fallback of _prompt_tokens)."""
+    return int(sum(len(m["content"]) for m in messages) / CHARS_PER_TOKEN) + 16 * len(messages) + 64
+
+
+def _prompt_tokens(client, model: str, messages: list[dict]) -> int:
+    """The prompt's size in tokens: the server's count (vLLM /tokenize) plus
+    PROMPT_MARGIN, or _est_tokens if the server cannot be asked (a transient
+    failure falls back for that one call only)."""
+    base = str(getattr(client, "base_url", "") or "").rstrip("/")
+    if base:
+        root = base[:-3] if base.endswith("/v1") else base
+        try:
+            req = urllib.request.Request(
+                root + "/tokenize", data=json.dumps({"model": model, "messages": messages}).encode(),
+                headers={"Content-Type": "application/json",
+                         "Authorization": f"Bearer {getattr(client, 'api_key', '') or 'EMPTY'}"})
+            with urllib.request.urlopen(req, timeout=60) as fh:
+                return int(json.loads(fh.read())["count"]) + PROMPT_MARGIN
+        except Exception:
+            pass
+    return _est_tokens(messages)
+
+
+# how vLLM reports the prompt size when it refuses a request that does not fit its window
+_PROMPT_SIZE = (re.compile(r"request has (\d+) input tokens"), re.compile(r"\((\d+) in the messages"),
+                re.compile(r"Input length \((\d+)\)"),
+                re.compile(r"prompt contains (?:at least )?(\d+) input tokens"))   # vLLM 0.18
+
+
+def _complete(client, model: str, messages: list[dict], effort: str, max_tokens: int):
+    """One v3 request. A server that refuses prompt + max_tokens over its
+    window (vLLM 0.18: "...your prompt contains N input tokens...") is asked once more with the
+    limit worked out from the prompt size it reported; a prompt that does not
+    fit on its own is an error."""
+    params = request_params(model, effort)
+    try:
+        resp = client.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens,
+                                              timeout=REPLY_TIMEOUT, **params)
+    except Exception as exc:
+        text = str(exc)
+        if "context length" not in text and "context window" not in text:
+            raise
+        n = next((int(m.group(1)) for pat in _PROMPT_SIZE if (m := pat.search(text))), None)
+        if n is None or n + 64 > WINDOW:
+            raise
+        reserve = SUMMARY_RESERVE if max_tokens > SUMMARY_TOKENS_V3 else 0     # only a reply keeps one
+        resp = client.chat.completions.create(model=model, messages=messages,
+                                              max_tokens=max(64, min(WINDOW - n - reserve, max_tokens)),
+                                              timeout=REPLY_TIMEOUT, **params)
+    _count_tokens(resp)
+    return resp
+
+
+def _parts(resp) -> tuple[str, str]:
+    """(hidden reasoning, visible reply) of a response; either may be ''."""
+    msg = resp.choices[0].message
+    thinking = (getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None) or "").strip()
+    return thinking, (getattr(msg, "content", None) or "").strip()
+
+
+_SUMMARY_BODY_V3 = ("Future participants see ONLY this summary, never your full reasoning, so make it "
+                    "complete enough that a reader could follow and check your whole argument from it. "
+                    "Cover: the decisive facts or steps in the order you used them, every calculation with "
+                    "its numbers and intermediate results, the assumptions you made, the options you ruled "
+                    "out and why, and the point you are least sure of.")
+
+
+_SUMMARY_BODY_OPEN = _SUMMARY_BODY_V3.replace("the options you ruled out", "the alternatives you ruled out")
+
+
+def summary_nudge_v3(letter: str | None) -> str:
+    """The summary prompt: answer-locked for a committed reply, letter-first
+    for an uncommitted one (with open answers, the answer in place of the letter)."""
+    body = _SUMMARY_BODY_OPEN if OPEN else _SUMMARY_BODY_V3
+    if OPEN and letter is None:
+        return ("Your reply ended before it gave an answer. Based only on the reasoning above, "
+                "begin with the line 'ANSWER: <final answer>', giving the final answer that reasoning "
+                "supports in the required format (for a question with answer choices, only the letter). "
+                f"Then summarise that reasoning for future participants, in at most {SUMMARY_WORDS} "
+                f"words. {body} Do not add new analysis.")
+    if letter is not None:
+        return (f"Now write a summary of your reasoning above for future participants, in at most "
+                f"{SUMMARY_WORDS} words. {body} Your answer is final: {letter}. This summary "
+                f"reports the reasoning in your reply above. It must not reconsider, change or argue "
+                f"against that answer, and it must not add new analysis. End with exactly one line "
+                f"'ANSWER: {letter}'.")
+    return ("Your reply ended before it gave an answer. Based only on the reasoning above, "
+            "begin with the line 'ANSWER: X', where X is the single option letter that reasoning "
+            f"supports. Then summarise that reasoning for future participants, in at most "
+            f"{SUMMARY_WORDS} words. {_SUMMARY_BODY_V3} Do not add new analysis.")
+
+
+def _answer_letters(text: str, n_options: int) -> list[str]:
+    """The letters of every valid 'ANSWER: X' in `text`, in order, markdown
+    emphasis ignored ('**Answer:** B' counts). With open answers, every ANSWER
+    line's normalised answer (MATH answers: every answer's key, math_answers)."""
+    if OPEN:
+        return math_answers(text) if MATH else open_answers(text)
+    return [m.upper() for m in _ANS.findall((text or "").replace("*", ""))
+            if LETTERS.index(m.upper()) < n_options]
+
+
+def _strip_answer_lines(text: str) -> str:
+    """`text` without its ANSWER lines, markdown emphasis ignored when finding them."""
+    if OPEN:
+        return _ANS_OPEN.sub("", text or "").strip()
+    return "\n".join(l for l in (text or "").splitlines() if not _ANS.search(l.replace("*", ""))).strip()
+
+
+def _opening(system: str | None, user: str) -> list[dict]:
+    """The first messages of a v3 request: the system prompt (none for the official solver), then
+    the user message."""
+    return ([] if system is None else [{"role": "system", "content": system}]) + [{"role": "user", "content": user}]
+
+
+def _followup_v3(client, model: str, system: str | None, user: str, shown: str, nudge: str,
+                 max_tokens: int) -> str:
+    """A summary or commit call at low effort: the same conversation, the reply
+    as `shown`, then the nudge. Only the visible text counts: hidden reasoning
+    returned in its place is a failed call. A request the server refuses ('' is
+    returned) is part of the reply's record; a server that cannot be reached, times
+    out or fails (since 2026-10-06) raises, so the round is not recorded and is run
+    again, instead of being kept for good without its summary or letter."""
+    messages = _opening(system, user) + [{"role": "assistant", "content": shown}, {"role": "user", "content": nudge}]
+    try:
+        _, text = _parts(_complete(client, model, messages, "low", max_tokens))
+    except Exception as exc:
+        if _server_trouble(exc):
+            raise
+        return ""
+    return text
+
+
+def _server_trouble(exc: Exception) -> bool:
+    """A connection failure, a timeout, a rate limit or a server-side (5xx) error: not an answer
+    about this request, so the round must be run again."""
+    import openai
+    if isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError,
+                        openai.InternalServerError)):
+        return True
+    status = getattr(exc, "status_code", None)
+    return isinstance(status, int) and status >= 500
+
+
+def chat_v3(client, model: str, system: str | None, user: str, n_options: int,
+            effort: str = DEFAULT_EFFORT, info: dict | None = None) -> str:
+    """One speaker under v3. Returns the text to store: the visible reply, or
+    reply + SUMMARY_MARK + what later speakers read. Its last ANSWER line is the
+    speaker's letter (none if it never committed). `info`, if given, is filled
+    with what happened: the reply's size, its finish reason, and the path taken
+    (a V2_STATS name: skipped_short, summaries, rejected_summaries, ...).
+    `system` None sends no system message (the official solver prompt)."""
+    def end(stat: str, text: str) -> str:
+        _bump(stat)
+        if info is not None:
+            info["path"] = stat
+        return text
+
+    messages = _opening(system, user)
+    room = max(MIN_REPLY_TOKENS, WINDOW - _prompt_tokens(client, model, messages) - SUMMARY_RESERVE)
+    resp = _complete(client, model, messages, effort, room)
+    thinking, visible = _parts(resp)
+    letter = extract_letter(visible, n_options)
+    if (letter is None and not OPEN
+            and (bold := extract_letter(visible.replace("*", ""), n_options)) is not None):
+        # 'Answer: **H**' / '**Answer:** H' (gpt-oss: 9 of 200 replies in the probe, 3 low effort and
+        # 6 high): a commitment in markdown; stored with a plain ANSWER line so every reader finds it
+        letter, visible = bold, visible + f"\nANSWER: {bold}"
+    if info is not None:
+        info.update(visible_words=len(visible.split()), thinking_chars=len(thinking), max_tokens=room,
+                    finish_reason=getattr(resp.choices[0], "finish_reason", None), committed=letter is not None)
+    if not (thinking or visible):
+        return end("uncommitted", "")
+    # the reasoning is in the hidden channel: high effort, or a reply too short to carry it
+    hidden = bool(thinking) and (effort == "high" or len(visible) < VISIBLE_MIN_CHARS)
+    if letter is not None and not hidden and len(visible.split()) <= SUMMARY_WORDS:
+        return end("skipped_short", visible)
+    tail = thinking[-THINKING_TAIL:] if hidden else ""
+    shown = f"[the end of my private reasoning]\n{tail}\n\n[my reply]\n{visible}" if tail else visible
+    full = visible or "(no reply: the reasoning ran out of room)"
+    tally = getattr(_tokens, "tally", None)
+    before = tally["completion"] if tally is not None else 0
+    summary = _followup_v3(client, model, system, user, shown, summary_nudge_v3(letter), SUMMARY_TOKENS_V3)
+    if SUMMARY_SPLIT and letter is not None and tally is not None:     # a summary for later speakers only
+        tally["summary"] = tally.get("summary", 0) + tally["completion"] - before
+    if summary and on_summary is not None:
+        on_summary()
+    said = _answer_letters(summary, n_options)
+    if letter is not None:
+        if not summary:
+            return end("failed_summaries", full)
+        if any(l != letter for l in said):
+            return end("rejected_summaries", full)       # it argued for another letter: show the reply
+        return end("summaries", full + SUMMARY_MARK + _strip_answer_lines(summary) + f"\nANSWER: {letter}")
+    if said:                                             # letter-first: the first ANSWER line commits
+        return end("recovered_commits", full + SUMMARY_MARK + _strip_answer_lines(summary) + f"\nANSWER: {said[0]}")
+    commit = _followup_v3(client, model, system, user, shown, COMMIT_NUDGE, COMMIT_TOKENS_V3)
+    if commit and on_followup is not None:
+        on_followup()
+    got = extract_letter(commit, n_options) or commit_letter_lenient(commit, n_options)
+    shown_part = SUMMARY_MARK + summary if summary else ""
+    if got is None:
+        return end("uncommitted", full + shown_part)
+    return end("nudged_commits", full + (shown_part or SUMMARY_MARK) + COMMIT_MARK + f"ANSWER: {got}")
 
 
 # --- schema grammar --------------------------------------------------------
@@ -745,8 +1435,107 @@ def _strip_commitment(text: str) -> str:
     return re.sub(r"^.*ANSWER\s*:\s*\(?\s*[A-J]\b.*$", "", text or "", flags=re.I | re.M).strip()
 
 
-def _visible(all_rounds: list[list[tuple[str, str]]], mode: str, n: int) -> str:
-    """The prior-response context a persona is shown, under one visibility mode."""
+# --- the discussion as later speakers see it (2026-10-06) ---------------------------------------
+# Round by round: each round names how many speakers it had and what they saw (only the question,
+# or the rounds before it), so a reader knows that speakers of one round answered at the same time
+# and never saw each other. Each speaker shows its answer, then its summary (or its reply, if short)
+# without its answer line. A speaker that sees the discussion is also told which round it speaks in
+# and how many others answer in that round at the same time. Until 2026-10-06 the earlier replies
+# were one flat list under "Prior responses:" ("[solver] chose B: ..."), with no rounds.
+DISCUSSION_HEAD = ("The discussion so far. It ran in rounds. Speakers in the same round answered at the same "
+                   "time, so none of them saw the other replies of that round.")
+
+
+def _round_saw(i: int, spec: dict | None) -> str | None:
+    """What the speakers of round `i` (0-based) saw, from the round's spec; None if it is not known."""
+    if spec is None:
+        return None
+    mode = spec.get("sees", DEFAULT_SEES)
+    if i == 0 or mode == "none" or all(p in FORCED_BLIND for p in spec["personas"]):
+        return "only the question"
+    earlier = "round 1" if i == 1 else f"rounds 1 to {i}"
+    if mode == "last_round":
+        return f"round {i}"
+    if mode == "letters_only":
+        return f"only the answers of {earlier}"
+    if mode == "no_letters":
+        return f"the reasoning of {earlier}, without the answers"
+    return earlier
+
+
+def _drop_final_answer(text: str) -> str:
+    """`text` without the answer line(s) at its end: the round's listing names the answer."""
+    lines = (text or "").rstrip().splitlines()
+    while lines and (_ANS_OPEN.match(lines[-1]) if OPEN else _ANS.search(lines[-1].replace("*", ""))):
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
+def _discussion(all_rounds: list[list[tuple[str, str]]], n: int, prior_specs: list[dict] | None = None,
+                last_only: bool = False) -> str:
+    """The discussion, round by round (only the last round with `last_only`). `prior_specs`, the
+    specs of the rounds in `all_rounds`, tells what each round's speakers saw; without them that
+    is left out."""
+    blocks = []
+    for i in range(len(all_rounds) - 1 if last_only else 0, len(all_rounds)):
+        rnd = all_rounds[i]
+        if not rnd:
+            continue
+        spec = prior_specs[i] if prior_specs is not None and i < len(prior_specs) else None
+        k = len(rnd)
+        head = f"Round {i + 1} ({k} speaker{'' if k == 1 else 's'}"
+        if (saw := _round_saw(i, spec)) is not None:
+            head += f"; {'it' if k == 1 else 'they'} saw {saw}"
+        parts = [head + ")"]
+        count, seen = Counter(p for p, _ in rnd), Counter()
+        for p, r in rnd:
+            seen[p] += 1
+            tag = f"[Round {i + 1}, {p} {seen[p]}]" if count[p] > 1 else f"[Round {i + 1}, {p}]"
+            if p not in NON_ANSWERING:
+                tag += f" Answer: {extract_letter(r, n) or 'none'}"
+            body = _drop_final_answer(_shown(r))
+            parts.append(f"{tag}\n{body}" if body else tag)
+        blocks.append("\n\n".join(parts))
+    return DISCUSSION_HEAD + "\n\n" + "\n\n".join(blocks) if blocks else ""
+
+
+def _where(round_no: int, k: int) -> str:
+    """Told to a speaker that sees the discussion: the round it speaks in, and the other speakers
+    of that round (`k` speakers in all), who answer at the same time."""
+    out = f"You speak in round {round_no}."
+    if k == 2:
+        out += " 1 other speaker answers in this round at the same time; you do not see its reply."
+    elif k > 2:
+        out += f" {k - 1} other speakers answer in this round at the same time; you do not see their replies."
+    return out
+
+
+# A critic, verifier or synthesizer reviews the answers given so far. They never speak blind, so
+# only as the first speaker of a debate is there nothing to review; the search does put them there
+# (12-43% of the programs of past runs opened with one, and gpt-oss run2's best programs opened with a
+# high-effort verifier). Such a speaker is told so, and works on the question itself (2026-10-06).
+REVIEWERS = ("critic", "verifier", "synthesizer")
+NOTHING_TO_REVIEW = ("No one has answered this question yet, so there is no discussion to read. Work on the "
+                     "question and its options yourself, in your role, and give your answer.")
+
+
+def _user_message(base: str, ctx: str, where: str, instr: str) -> str:
+    """A speaker's user message (every persona but the v3 multiple-choice solver)."""
+    if not ctx:
+        return f"{base}\n\n{instr}"
+    return f"{base}\n\n{ctx}\n\n" + " ".join(x for x in (where, "Give your response.", instr) if x)
+
+
+def _solver_message(head: str, ctx: str, where: str) -> str:
+    """The v3 multiple-choice solver's user message: the dataset's own prompt, then the discussion."""
+    if not ctx:
+        return head
+    return f"{head}\n{ctx}\n\n" + " ".join(x for x in (where, "Give your response.") if x)
+
+
+def _visible(all_rounds: list[list[tuple[str, str]]], mode: str, n: int,
+             prior_specs: list[dict] | None = None) -> str:
+    """The discussion a persona is shown, under one visibility mode."""
     if mode == "none" or not all_rounds:
         return ""
     flat = [pr for rnd in all_rounds for pr in rnd]
@@ -759,11 +1548,44 @@ def _visible(all_rounds: list[list[tuple[str, str]]], mode: str, n: int) -> str:
                         and (l := extract_letter(r, n)))
         if not tally:
             return ""
-        return "Prior committed answers: " + ", ".join(f"{l} x{c}" for l, c in tally.most_common())
-    if mode == "no_letters":     # the reasoning, with the commitments removed
+        return "Answers so far: " + ", ".join(f"{l} x{c}" for l, c in tally.most_common())
+    if mode == "no_letters":     # the reasoning, with the answers removed
         parts = [f"[{p}]:\n{_strip_commitment(_shown(r))}" for p, r in flat]
         return "Prior reasoning (conclusions withheld):\n" + "\n\n".join(parts)
-    return "Prior responses:\n" + _digest(flat, n)      # "all"
+    return _discussion(all_rounds, n, prior_specs, last_only=mode == "last_round")      # "all", "last_round"
+
+
+_SIGNATURE: tuple | None = None
+
+
+def prompt_signature() -> str:
+    """A short hash of every text a speaker is sent: the persona prompts, the solver's question
+    prompt, the question layout, the discussion format, the user messages and the follow-up
+    prompts, under the current switches. It is part of every round cache key and of the settings
+    (since 2026-10-06), so a change to any of these texts gives new recordings, and an archive made
+    with other texts is refused instead of being continued with these."""
+    global _SIGNATURE
+    state = (tuple(sorted(PERSONA_PROMPTS.items())), EXPERT_TMPL, ANSWER_INSTR, SUMMARY_WORDS, OPEN, V3,
+             COMMIT_NUDGE, MATH)                 # the texts themselves, never an object's address
+    if _SIGNATURE is not None and _SIGNATURE[0] == state:
+        return _SIGNATURE[1]
+    rounds = [[("solver", "Step one.\nANSWER: A"), ("solver", "Step two.\nANSWER: B")], [("critic", "A flaw.\nANSWER: B")]]
+    ctx = _discussion(rounds, 4, [{"personas": ["solver", "solver"]}, {"personas": ["critic"]}])
+    texts = {"personas": PERSONA_PROMPTS, "expert": EXPERT_TMPL, "instr": ANSWER_INSTR,
+                       "solver_high": solver_system(PERSONA_PROMPTS["solver"], "high"),
+                       "solver_low": solver_system(PERSONA_PROMPTS["solver"], "low"),
+                       "expert_low": speaker_system("expert", EXPERT_TMPL, "low"),
+                       "nothing_to_review": NOTHING_TO_REVIEW,
+                       "question": official_question("Q?", ["x", "y"]), "layout": render_question("Q?", ["x", "y"]),
+                       "user": _user_message("<q>", ctx, _where(3, 3), ANSWER_INSTR),
+                       "solver": _solver_message("<q>", ctx, _where(3, 2)),
+                       "summary": [summary_nudge_v3("A"), summary_nudge_v3(None)], "commit": COMMIT_NUDGE,
+                       "marks": [SUMMARY_MARK, COMMIT_MARK], "v2_summary": SUMMARY_NUDGE}
+    if MATH:                                     # named only with MATH answers: every other blob is as before
+        texts["math"] = {"solver": _solver_message(math_question("<q>"), ctx, _where(3, 2))}
+    blob = json.dumps(texts, sort_keys=True)
+    _SIGNATURE = (state, hashlib.sha1(blob.encode()).hexdigest()[:10])
+    return _SIGNATURE[1]
 
 
 def _standing_letter(all_rounds, n: int) -> str | None:
@@ -795,16 +1617,22 @@ def set_round_parallel(on: bool) -> None:
 
 
 def execute_round(client, model, question, options, round_spec, all_rounds, temperature,
-                  max_tokens: int = 3072, prompts: dict | None = None) -> list[tuple[str, str]]:
+                  max_tokens: int = 3072, prompts: dict | None = None,
+                  prior_specs: list[dict] | None = None) -> list[tuple[str, str]]:
     """Run ONE round on top of an existing transcript and return its (persona,
     response) pairs. `all_rounds` is not modified; personas within the round do
     not see each other. Extracted verbatim from execute_schema so the
     per-question methods (treegrow, adaptive depth) run rounds incrementally
-    through the exact code path the batch executor uses."""
+    through the exact code path the batch executor uses. `prior_specs`, the
+    specs of the rounds in `all_rounds` (the round runner passes them), lets the
+    discussion say what each earlier round's speakers saw."""
     book = {**PERSONA_PROMPTS, **(prompts or {})}
     base = render_question(question, options)
     n = len(options)
     mode = round_spec.get("sees", DEFAULT_SEES)
+    effort = round_spec.get("effort", DEFAULT_EFFORT)
+    if effort != DEFAULT_EFFORT and not V3:
+        raise ValueError("a round's effort can only be set under the v3 executor")
 
     def one(slot: int) -> tuple[str, str]:
         """Speaker number `slot`, with its own token tally (speakers of one round
@@ -816,16 +1644,32 @@ def execute_round(client, model, question, options, round_spec, all_rounds, temp
             _tokens.tally = None
 
     def _one(persona: str) -> tuple[str, str]:
-        ctx = _visible(all_rounds, "none" if persona in FORCED_BLIND else mode, n)
+        ctx = _visible(all_rounds, "none" if persona in FORCED_BLIND else mode, n, prior_specs)
+        where = _where(len(all_rounds) + 1, len(round_spec["personas"])) if ctx else ""
+        system = speaker_system(persona, book[persona], effort)
+        if V3 and (not OPEN or MATH) and persona == OFFICIAL_PERSONA:
+            # the dataset's own prompt (the external direct baseline's request), then the discussion
+            head = math_question(question) if MATH else official_question(question, options)
+            return persona, chat_v3(client, model, system, _solver_message(head, ctx, where), n, effort)
         instr = ("Rule out options; do NOT give an ANSWER line."
                  if persona in NON_ANSWERING else ANSWER_INSTR)
         if persona == "contrarian" and (sl := _standing_letter(all_rounds, n)):
             instr = f"You may NOT choose option {sl}. " + instr
-        user = f"{base}\n\n{ctx}\n\nGive your response. {instr}" if ctx else f"{base}\n\n{instr}"
+        judging = persona == JUDGE_PERSONA
+        if judging:                                # the debate, then the answers to choose from
+            if not V3:
+                raise ValueError("the judge speaker needs the v3 executor")
+            cands = judge_candidates(all_rounds, n)
+            ctx = (ctx + "\n\n" if ctx else "") + judge_block(cands)
+        if persona in REVIEWERS and not ctx:       # first in the debate: nothing to review yet
+            instr = f"{NOTHING_TO_REVIEW} {instr}"
+        user = _user_message(base, ctx, where, instr)
         if persona in NON_ANSWERING:
             text = chat(client, model, book[persona], user, temperature, max_tokens)
-        elif persona == DEEP_PERSONA:
-            text = chat_v2_deep(client, model, book[persona], user, temperature, n)
+        elif V3:                                   # sampling and reply room are v3's own
+            text = chat_v3(client, model, system, user, n, effort)
+            if judging:
+                text = judge_restrict(client, model, book[persona], user, text, cands, n)
         elif V2:
             text = chat_v2(client, model, book[persona], user, temperature, max_tokens, n)
         else:

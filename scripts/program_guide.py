@@ -3,7 +3,7 @@ batch, and guided edits of an existing program from digests of where it
 failed. Both go through the OpenAI Responses API with a structured output, so
 what comes back is a program object, not prose to parse.
 
-The guiding model is gpt-5.6-terra at medium reasoning by default. It never
+The guiding model is gpt-6-sol at medium reasoning by default. It never
 sees the debate model's prompts or the test questions; at search time it sees
 training questions' transcripts in digest form (letters per round, gold, and
 the last speaker's short summary).
@@ -20,6 +20,7 @@ and the caller falls back to a random edit.
 from __future__ import annotations
 
 import json
+import re
 import os
 import random
 import sys
@@ -35,7 +36,7 @@ import debate_mcq as D  # noqa: E402
 import evolve_program_mcq as M  # noqa: E402
 import program_space as P  # noqa: E402
 
-GUIDE_MODEL = "gpt-5.6-terra"          # the model that labelled the questions (describe_questions.py)
+GUIDE_MODEL = "gpt-6-sol"          # the model that labelled the questions (describe_supergpqa_v3.py, describe_hle_v4.py)
 GUIDE_EFFORT = "medium"
 
 
@@ -54,6 +55,8 @@ def make_client():
 class PlanRound(BaseModel):
     personas: list[str]
     sees: str | None = Field(default=None, description="omit or null for the default 'all'")
+    effort: str | None = Field(default=None, description="'high' for a high-effort round (v3 grammar only); "
+                                                         "omit or null for the default, low")
 
 
 class Rule(BaseModel):
@@ -83,7 +86,8 @@ class Edit(BaseModel):
 
 
 def to_program(p: Program) -> dict:
-    prog = {"plan": [{"personas": r.personas, **({"sees": r.sees} if r.sees else {})} for r in p.plan],
+    prog = {"plan": [{"personas": r.personas, **({"sees": r.sees} if r.sees else {}),
+                      **({"effort": r.effort} if r.effort else {})} for r in p.plan],
             "rules": [{"when": r.when, "do": r.do} for r in p.rules],
             "default": p.default}
     prog = P.normalize_program(prog)
@@ -127,8 +131,8 @@ kinds of question the debate faces. Write {n_new} NEW programs. Requirements:
 - Each must be valid under the grammar above, using only the listed plan
   specs, conditions and actions, exactly as spelled.
 - Each must differ from every existing program and from each other in at
-  least two of: opening width, stop read, the set of moves used, the
-  conditions it branches on.
+  least two of: opening width, stop read, the set of extra rounds its rules
+  run, the conditions it branches on.
 - Aim each at a different strategy or a different kind of question; say
   which in the strategy line.
 - Keep programs short (2 to 6 rules). Prefer programs whose typical cost is
@@ -173,7 +177,7 @@ def write_seeds(client, existing: dict[str, dict], group_texts: list[str], n_new
     return out
 
 
-# --- one seed program per question group (the v3 seed stage) ---------------------------
+# --- one seed program per question group (the cluster-pipeline seed stage) ---------------------------
 
 class GroupSeedProgram(BaseModel):
     group: int = Field(description="the number of the question group this program is written for")
@@ -186,62 +190,95 @@ class GroupSeedBatch(BaseModel):
     programs: list[GroupSeedProgram]
 
 
-GROUP_SEED_INSTRUCTIONS = """You design control programs for a multi-agent debate that answers hard
-graduate-level multiple-choice questions. Copies of one language model play
-roles (solver, critic, verifier, expert, independent solver, synthesizer). A
-program decides, after every round, what to run next or when to stop and how
-to read the answer off the transcript.
+GROUP_SEED_INSTRUCTIONS = """You design control programs for a multi-agent debate that answers {task}. Copies of one language model play
+roles ({roles}). A
+program decides, before the first round and after every round, what to run
+next or when to stop and how to read the answer off the transcript.
 
 {grammar}
 
 You will be shown {n_existing} existing programs and a description of
 {n_groups} groups of question, each with the reasoning it typically needs and
-the way it typically goes wrong. Write exactly ONE new program for EACH group,
-aimed at that group's reasoning and its main failure risk. Requirements:
+the way it typically goes wrong{examples}. Write exactly {n_per_group} new program{plural} for
+EACH group, aimed at that group's reasoning and its main failure risk{spread}.
+Requirements:
 - Each must be valid under the grammar above, using only the listed plan
   specs, conditions and actions, exactly as spelled.
+- Each must start its debate: at step==0 its first matching rule must be
+  "continue" or a round (the plan never runs by itself).
+- Its first round (the first plan round, or the round a rule runs at
+  step==0) must have no critic, verifier or synthesizer: they review the
+  answers given so far, and there are none yet.
 - Each must differ from every existing program and from each other in at
-  least two of: opening width, stop read, the set of moves used, the
-  conditions it branches on.
+  least two of: opening width, stop read, the set of extra rounds its rules
+  run, the conditions it branches on.
 - Say in the strategy line why the program suits its group.
 - Keep programs short (2 to 6 rules). Prefer programs whose typical cost is
   between 2 and 10 speaker turns.
-- Do not simply add rounds to an existing program.
-Return one program per group, each labelled with its group number."""
+- Do not simply add rounds to an existing program.{axes}
+Return {n_per_group} program{plural} per group, each labelled with its group number."""
+
+# v3 only: the two per-round settings the grammar text describes
+AXES_NOTE = """
+- Choose each round's effort and visibility for the group: where a long
+  private reasoning is worth its cost, and where a speaker should answer
+  from the question alone rather than from the debate so far."""
 
 
 def write_group_seeds(client, existing: dict[str, dict], group_texts: dict[int, str],
-                      effort: str = GUIDE_EFFORT) -> list[dict]:
-    """One model-written program per question group, each validated, in group
-    order. A group whose program was invalid or a duplicate is asked for again
-    (with the problem named), a few times at most."""
-    instructions = GROUP_SEED_INSTRUCTIONS.format(grammar=P.grammar_text(), n_existing=len(existing),
-                                                  n_groups=len(group_texts))
+                      effort: str = GUIDE_EFFORT, per_group: int = 1, examples: int = 0) -> list[dict]:
+    """`per_group` model-written programs per question group, each validated,
+    in group order. A group left short (a program invalid, a duplicate, a plan over the turn
+    cap, or a critic, verifier or synthesizer in the first round) is asked for again, with the
+    problems named, a few times at most."""
+    instructions = GROUP_SEED_INSTRUCTIONS.format(
+        task=("hard competition mathematics problems, each with a short exact answer" if D.MATH
+              else "hard expert-level questions, most with a short exact answer and some multiple choice"
+              if D.OPEN else "hard\ngraduate-level multiple-choice questions"),
+        grammar=P.grammar_text(), n_existing=len(existing), n_groups=len(group_texts),
+        examples=(f", and up to {examples} example questions from it (as the debaters see them, "
+                  f"without their answers)" if examples else ""),
+        axes=AXES_NOTE if D.V3 else "", n_per_group="ONE" if per_group == 1 else per_group,
+        plural="" if per_group == 1 else "s",
+        spread="" if per_group == 1 else " (each taking a different approach to it)",
+        roles=(("solver, critic, verifier, expert, synthesizer" + (", judge" if D.JUDGE_ON else ""))
+               if D.V3 else "solver, critic, verifier, expert, independent solver, synthesizer"))
     shown = "\n".join(f"{name}: {json.dumps(prog, separators=(',', ':'))}"
                       for name, prog in existing.items())
     base = "EXISTING PROGRAMS\n" + shown + "\n\nGROUPS OF QUESTION\n"
-    got: dict[int, dict] = {}
+    got: dict[int, list[dict]] = {g: [] for g in group_texts}
     seen = {P.canon(p) for p in existing.values()}
     feedback = ""
     for _ in range(4):
-        todo = [g for g in group_texts if g not in got]
-        if not todo:
+        need = {g: per_group - len(got[g]) for g in group_texts if len(got[g]) < per_group}
+        if not need:
             break
-        user = (base + "\n".join(group_texts[g] for g in todo)
-                + f"\n\nWrite one new program for each of these groups: {todo}." + feedback)
-        if got:
-            user += ("\n\nPrograms already written for the other groups (differ from these too):\n"
+        todo = list(need)
+        n = max(need.values())
+        user = (base + "\n\n".join(group_texts[g] for g in todo)
+                + f"\n\nWrite {n} new program{'s' if n > 1 else ''} for each of these groups: {todo}." + feedback)
+        if any(got.values()):
+            user += ("\n\nPrograms already written (differ from these too):\n"
                      + "\n".join(f"{w['name']}: {json.dumps(w['program'], separators=(',', ':'))}"
-                                 for w in got.values()))
-        batch, usage = _call(client, instructions, user, GroupSeedBatch, effort)
+                                 for ws in got.values() for w in ws))
+        # the structured output holds every program; allow for the model's reasoning as well
+        batch, usage = _call(client, instructions, user, GroupSeedBatch, effort,
+                             max_output_tokens=6000 + 1500 * n * len(todo))
         rejects = []
         for sp in batch.programs:
-            if sp.group not in todo or sp.group in got:
+            if sp.group not in need or len(got[sp.group]) >= per_group:
                 continue
             try:
                 prog = to_program(sp.program)
             except Exception as exc:                        # grammar miss
                 rejects.append(f"group {sp.group} ({sp.name}): {type(exc).__name__}: {exc}"[:200])
+                continue
+            if (why := P.never_runs_as_written(prog)) is not None:
+                rejects.append(f"group {sp.group} ({sp.name}): {why}")
+                continue
+            if P.reviewer_first(prog):
+                rejects.append(f"group {sp.group} ({sp.name}): a critic, verifier or synthesizer speaks in "
+                               "the first round, where there is nothing to review")
                 continue
             key = P.canon(prog)
             if key in seen:
@@ -249,10 +286,147 @@ def write_group_seeds(client, existing: dict[str, dict], group_texts: dict[int, 
                 continue
             seen.add(key)
             clean = "".join(ch if ch.isalnum() else "_" for ch in sp.name)[:32]
-            got[sp.group] = {"name": f"llm_g{sp.group}_{clean}", "group": sp.group,
-                             "strategy": sp.strategy, "program": prog, "usage": usage}
+            i = len(got[sp.group]) + 1
+            got[sp.group].append({"name": f"llm_g{sp.group}_{i}_{clean}" if per_group > 1 else f"llm_g{sp.group}_{clean}",
+                                  "group": sp.group, "strategy": sp.strategy, "program": prog, "usage": usage})
         feedback = ("\n\nYour previous batch had these problems:\n" + "\n".join(rejects)) if rejects else ""
-    return [got[g] for g in sorted(got)]
+    return [w for g in sorted(got) for w in got[g]]
+
+
+# --- one seed program per cost level (the global-pipeline seed stage) --------------------------------
+
+class LevelSeedProgram(BaseModel):
+    level: str = Field(description="the cost level this program is written for (one of the level names shown)")
+    name: str = Field(description="short snake_case name")
+    strategy: str = Field(description="one sentence: what the program does and why it suits its level")
+    program: Program
+
+
+class LevelSeedBatch(BaseModel):
+    programs: list[LevelSeedProgram]
+
+
+LEVEL_SEED_INSTRUCTIONS = """You design control programs for a multi-agent debate that answers {task}. Copies of one language model play
+roles ({roles}). A
+program decides, before the first round and after every round, what to run
+next or when to stop and how to read the answer off the transcript.
+
+{grammar}
+
+You will be shown {n_existing} existing programs and {examples} example questions of the
+kind the debate answers (as the debaters see them, without their answers).
+Write exactly ONE new program for EACH of these {n_levels} cost levels (the
+average number of speaker turns the program uses per question):
+{levels}
+Requirements:
+- Each must be valid under the grammar above, using only the listed plan
+  specs, conditions and actions, exactly as spelled.
+- Each must start its debate: at step==0 its first matching rule must be
+  "continue" or a round (the plan never runs by itself).
+- Each must differ from every existing program and from each other in at
+  least two of: opening width, stop read, the set of extra rounds its rules
+  run, the conditions it branches on.
+- Its rules may treat questions differently by what happens in the debate,
+  for example stop early when the opening round agrees and spend more turns
+  when it does not; its average cost must stay inside its level.
+- Say in the strategy line what the program does and why it suits its level.
+- Keep programs short (2 to 6 rules).
+- Do not simply add rounds to an existing program.{axes}
+Return {n_levels} programs, each labelled with its level."""
+
+
+LEVEL_AXES_NOTE = """
+- Choose each round's effort and visibility: where a long private reasoning
+  is worth its cost, and where a speaker should answer from the question
+  alone rather than from the debate so far."""
+
+
+def level_label(label: str, names: list[str]) -> str | None:
+    """The level a written label names: the one level name among its words ('Cheap',
+    'medium-cost', 'level: expensive'), else None."""
+    hits = [n for n in names if n in re.findall(r"[a-z]+", label.lower())]
+    return hits[0] if len(hits) == 1 else None
+
+
+def same_reads_key(prog: dict) -> str:
+    """P.canon, with stop:last_speaker read as stop:last_commit when the final-read repair
+    makes the two the same."""
+    if M.LAST_ROUND_VOTE:
+        prog = json.loads(json.dumps(prog).replace('"stop:last_speaker"', '"stop:last_commit"'))
+    return P.canon(prog)
+
+
+def write_level_seeds(client, existing: dict[str, dict], examples_text: str,
+                      levels: list[tuple[str, str]], effort: str = GUIDE_EFFORT,
+                      n_examples: int = 0, written: list[dict] = (), on_reply=None) -> list[dict]:
+    """One model-written program per cost level, each validated, in the order of `levels`
+    ((name, description) pairs). The model sees the grammar, the existing programs and
+    `examples_text` (example questions, no answers, no difficulty, no scores). A level left
+    short (a program invalid, a duplicate, or a plan over the turn cap) is asked for again,
+    with the problems named, a few times at most; a level still short after that is left
+    out. `written` holds programs already accepted (a run continued after a failed call):
+    only the other levels are asked for. `on_reply`, if given, gets the programs accepted so
+    far after every reply, so a later failure loses no paid reply."""
+    names = [name for name, _ in levels]
+    desc = dict(levels)
+    shown = "\n".join(f"{name}: {json.dumps(prog, separators=(',', ':'))}"
+                      for name, prog in existing.items())
+    base = "EXISTING PROGRAMS\n" + shown + "\n\nEXAMPLE QUESTIONS\n" + examples_text
+    got: dict[str, dict | None] = {name: None for name in names}
+    for w in written:
+        if w.get("level") in got:
+            got[w["level"]] = w
+    seen = {same_reads_key(p) for p in existing.values()} | {same_reads_key(w["program"]) for w in written}
+    feedback = ""
+    for _ in range(4):
+        need = [name for name in names if got[name] is None]
+        if not need:
+            break
+        instructions = LEVEL_SEED_INSTRUCTIONS.format(
+            task=("hard competition mathematics problems, each with a short exact answer" if D.MATH
+                  else "hard expert-level questions, most with a short exact answer and some multiple choice"
+                  if D.OPEN else "hard\ngraduate-level multiple-choice questions"),
+            roles=(("solver, critic, verifier, expert, synthesizer" + (", judge" if D.JUDGE_ON else ""))
+                   if D.V3 else "solver, critic, verifier, expert, independent solver, synthesizer"),
+            grammar=P.grammar_text(), n_existing=len(existing), examples=n_examples,
+            levels="\n".join(f"  {name:<10} {desc[name]}" for name in need),
+            axes=LEVEL_AXES_NOTE if D.V3 else "", n_levels=len(need))
+        user = base + f"\n\nWrite one new program for each of these cost levels: {need}." + feedback
+        done = [w for w in got.values() if w is not None]
+        if done:
+            user += ("\n\nPrograms already written (differ from these too):\n"
+                     + "\n".join(f"{w['name']}: {json.dumps(w['program'], separators=(',', ':'))}" for w in done))
+        # the structured output holds every program; allow for the model's reasoning as well
+        batch, usage = _call(client, instructions, user, LevelSeedBatch, effort,
+                             max_output_tokens=6000 + 1500 * len(need))
+        rejects = []
+        for sp in batch.programs:
+            level = level_label(sp.level, names)
+            if level is None:
+                rejects.append(f"{sp.name}: the level {sp.level!r} is not one of {names}")
+                continue
+            if level not in need or got[level] is not None:
+                continue
+            try:
+                prog = to_program(sp.program)
+            except Exception as exc:                        # grammar miss
+                rejects.append(f"level {level} ({sp.name}): {type(exc).__name__}: {exc}"[:200])
+                continue
+            if (why := P.never_runs_as_written(prog)) is not None:
+                rejects.append(f"level {level} ({sp.name}): {why}")
+                continue
+            key = same_reads_key(prog)
+            if key in seen:
+                rejects.append(f"level {level} ({sp.name}): identical to an existing program")
+                continue
+            seen.add(key)
+            clean = "".join(ch if ch.isalnum() else "_" for ch in sp.name)[:32]
+            got[level] = {"name": f"llm_{level}_{clean}", "level": level, "strategy": sp.strategy,
+                          "program": prog, "usage": usage}
+        if on_reply is not None:
+            on_reply([got[name] for name in names if got[name] is not None])
+        feedback = ("\n\nYour previous batch had these problems:\n" + "\n".join(rejects)) if rejects else ""
+    return [got[name] for name in names if got[name] is not None]
 
 
 # --- guided edits --------------------------------------------------------------------
@@ -284,7 +458,7 @@ the opening round and lost the answer later: a shorter or more careful
 program would have kept them. Weigh those as seriously as the outright misses.
 
 Make exactly one edit of the requested kind and return the whole edited
-program. Do not make any other change. When the kind allows a choice of move
+program. Do not make any other change. When the kind allows a choice of round
 or condition, prefer one the program does not already use. Keep the program
 valid under the grammar, with every condition and action spelled exactly as
 listed."""

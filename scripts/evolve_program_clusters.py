@@ -1,6 +1,6 @@
 """Per-group evolutionary search for debate-control programs.
 
-One search over the six question groups of outputs/clusters_train_both.json
+One search over the six question groups of tests/data/clusters_train_both.json
 (50 search questions per group by default), keeping the best program per
 group and cost band instead of one global winner. Nothing from earlier
 experiments is used: no old cache, no old program. The executor runs the v2
@@ -774,8 +774,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path, required=True, help="run directory (archive, logs, results)")
     ap.add_argument("--seeds", type=Path, default=ROOT / "outputs/cluster_search/seeds.json")
-    ap.add_argument("--clusters", type=Path, default=ROOT / "outputs/clusters_train_both.json")
-    ap.add_argument("--dataset", type=Path, default=ROOT / "datasets/supergpqa_program_search_train.json")
+    ap.add_argument("--clusters", type=Path, default=ROOT / "outputs/describe_v3/clusters_600_train.json")
+    ap.add_argument("--dataset", type=Path, default=ROOT / "datasets/supergpqa_600_train.json")
     ap.add_argument("--per-group", type=int, default=50)
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--pick-champions", action="store_true", help="no search: champion picking only")

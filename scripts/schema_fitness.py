@@ -333,21 +333,19 @@ def race(schemas: list[dict], ev: Evaluator, stages: tuple[int, ...] = (64, 256,
 # so tree branches share their parent's rounds for free and a trimmed run of a
 # recipe is a cache prefix of the full one.
 
-# The rewritten critic prompt evolved by E7 (outputs/evolve_persona_text_summary.json,
-# individual i019, 16.7% on 192 train questions at 8 calls) -- the project's best
-# production-legal critic. Unlike the contrarian it is ALLOWED to keep the answer.
-_CRITIC_BODY = (
-    "You are a Critic. Your job is to challenge the leading answer, not to restate it. "
-    "Check for hidden flaws: misapplied rules, unstated assumptions, overlooked "
-    "constraints, or an option that better fits the question. Be concise but explicit "
-    "about why the leading answer may be wrong and what alternative is better supported. "
-    "If you find a real flaw, change the answer; otherwise keep it. ")
+# The per-question critic. Until 2026-10-06 it was the critic evolved by E7
+# (outputs/evolve_persona_text_summary.json, individual i019: "Your job is to challenge the
+# leading answer, not to restate it. ..."). Since then it is debate_mcq.CRITIC_BODY, which reads
+# the whole discussion, not only the leading answer; it may keep the answer.
+_CRITIC_BODY = D.CRITIC_BODY
 REWRITTEN_CRITIC_V1 = (_CRITIC_BODY + "Reason step by step, then end with exactly one "
                        "line: 'ANSWER: <letter>'. Always choose exactly one letter; never abstain.")
 # v2: the same critic, with the careful-reasoning instruction the other personas get.
 REWRITTEN_CRITIC_V2 = (_CRITIC_BODY + D.ANSWER_INSTR_V2
                        + " Always choose exactly one letter; never abstain.")
 REWRITTEN_CRITIC = REWRITTEN_CRITIC_V1
+# open answers (debate_mcq.set_open_answers): the same critic, asked for an answer, not an option
+_CRITIC_BODY_OPEN = D.CRITIC_BODY_OPEN
 
 
 def set_v2(on: bool) -> None:
@@ -363,15 +361,46 @@ def _rebuild_critic() -> None:
     """The per-question critic override from debate_mcq's current switches.
     With visible reasoning off this is exactly what set_v2 always chose."""
     global REWRITTEN_CRITIC
-    REWRITTEN_CRITIC = REWRITTEN_CRITIC_V2 if D.V2 else REWRITTEN_CRITIC_V1
+    if D.OPEN:          # D.ANSWER_INSTR carries the answer format and, if on, the visible sentence
+        REWRITTEN_CRITIC = _CRITIC_BODY_OPEN + D.ANSWER_INSTR + " Always give exactly one final answer; never abstain."
+        return
+    if D.PLAIN_INSTR:
+        REWRITTEN_CRITIC = _CRITIC_BODY + D.ANSWER_INSTR_PLAIN + " Always choose exactly one letter; never abstain."
+    else:
+        REWRITTEN_CRITIC = REWRITTEN_CRITIC_V2 if D.V2 else REWRITTEN_CRITIC_V1
     if D.VISIBLE_REASONING:
         REWRITTEN_CRITIC = REWRITTEN_CRITIC + D.VISIBLE_SENTENCE
 
 
-def set_visible_reasoning(on: bool) -> None:
+def set_visible_reasoning(on: bool, detailed: bool = False) -> None:
     """Ask every persona to put its reasoning in the visible reply (for
     models that think in a hidden channel). Off by default; see debate_mcq."""
-    D.set_visible_reasoning(on)
+    D.set_visible_reasoning(on, detailed)
+    _rebuild_critic()
+
+
+def set_plain_instruction(on: bool) -> None:
+    """The plain commitment instruction (debate_mcq.set_plain_instruction), with the
+    critic override rebuilt."""
+    D.set_plain_instruction(on)
+    _rebuild_critic()
+
+
+def set_v3(on: bool, window: int | None = None) -> None:
+    """The v3 executor (debate_mcq.set_v3), with the critic override rebuilt."""
+    D.set_v3(on, window)
+    _rebuild_critic()
+
+
+def set_open_answers(on: bool) -> None:
+    """Open answers (debate_mcq.set_open_answers), with the critic override rebuilt."""
+    D.set_open_answers(on)
+    _rebuild_critic()
+
+
+def set_math_answers(on: bool) -> None:
+    """MATH answers (debate_mcq.set_math_answers; with open answers on), with the critic override rebuilt."""
+    D.set_math_answers(on)
     _rebuild_critic()
 
 
@@ -391,14 +420,31 @@ def committed_letters(all_rounds: list[list[tuple[str, str]]], n: int) -> list[s
 def path_key(rounds: list[dict], prompts: dict | None = None) -> str:
     """Cache identity of a PARTIAL schema: the list of rounds executed so far.
     Same normalization as canon() -- `sees` emitted only when non-default, prompt
-    overrides as a hash -- so equal prefixes collide and get reused."""
+    overrides as a hash -- so equal prefixes collide and get reused. Under v3 a
+    round's effort is emitted when not the default, and the first round's `sees`
+    is dropped (it has nothing to see either way)."""
     norm = []
-    for r in rounds:
+    for i, r in enumerate(rounds):
         d = {"personas": list(r["personas"])}
-        if r.get("sees", D.DEFAULT_SEES) != D.DEFAULT_SEES:
+        if r.get("sees", D.DEFAULT_SEES) != D.DEFAULT_SEES and not (D.V3 and i == 0):
             d["sees"] = r["sees"]
+        if r.get("effort", D.DEFAULT_EFFORT) != D.DEFAULT_EFFORT:
+            d["effort"] = r["effort"]
         norm.append(d)
-    key: dict = {"rounds": norm}
+    return _finish_key({"rounds": norm}, prompts)
+
+
+def blind_key(persona: str, effort: str, ordinal: int, prompts: dict | None = None) -> str:
+    """Cache identity of ONE blind speaker under v3: a speaker who sees only the
+    question, so its reply does not depend on the debate before it. `ordinal`
+    counts the earlier blind calls of the same persona and effort in the debate,
+    so the k-th blind solver of every program is the same sample: four blind
+    solvers in one program are the first two of another plus a later pair."""
+    return _finish_key({"blind": [persona, effort, ordinal]}, prompts)
+
+
+def _finish_key(key: dict, prompts: dict | None) -> str:
+    """The settings every key carries after its round description."""
     if prompts:
         blob = json.dumps({k: prompts[k] for k in sorted(prompts)}, separators=(",", ":"))
         key["p"] = hashlib.sha1(blob.encode()).hexdigest()[:12]
@@ -424,7 +470,49 @@ def path_key(rounds: list[dict], prompts: dict | None = None) -> str:
     # they saw. Appended last, and only when not the original 120 words.
     if (w := D.summary_signature()) is not None:
         key["s"] = w
+    # Under v3 a reply may fill the window, so the window is part of what it is.
+    if (win := D.window_signature()) is not None:
+        key["w"] = win
+    # Open answers change every prompt. Appended last, and only when on.
+    if (o := D.open_signature()) is not None:
+        key["o"] = o
+    # The plain instruction changes every prompt. Appended last, and only when on.
+    if (i := D.plain_signature()) is not None:
+        key["i"] = i
+    # Every text a speaker is sent (persona prompts, the solver's question prompt, the discussion
+    # format, the follow-ups), as a short hash: a change to any of them gives new recordings and
+    # never replays old ones. In every key since 2026-10-06 (the prompts were rewritten then, so
+    # no earlier recording replays under the current prompts).
+    key["t"] = D.prompt_signature()
     return json.dumps(key, sort_keys=False, separators=(",", ":"))
+
+
+def is_blind_round(executed_specs: list[dict], round_spec: dict) -> bool:
+    """Under v3, a round whose speakers see nothing of the debate: the first
+    round, or any round with sees 'none'. Its speakers are cached one by one."""
+    return D.V3 and (not executed_specs or round_spec.get("sees", D.DEFAULT_SEES) == "none")
+
+
+def round_keys(executed_specs: list[dict], round_spec: dict,
+               prompts: dict | None = None) -> tuple[bool, list[str]]:
+    """(per_speaker, keys) for running `round_spec` after `executed_specs`. A
+    blind round has one key per speaker (blind_key, with the ordinals counted
+    over the earlier blind rounds); any other round has one key, its path."""
+    if not is_blind_round(executed_specs, round_spec):
+        return False, [path_key(executed_specs + [round_spec], prompts)]
+    seen: dict[tuple[str, str], int] = {}
+    for i, spec in enumerate(executed_specs):
+        if is_blind_round(executed_specs[:i], spec):
+            eff = spec.get("effort", D.DEFAULT_EFFORT)
+            for p in spec["personas"]:
+                seen[(p, eff)] = seen.get((p, eff), 0) + 1
+    eff = round_spec.get("effort", D.DEFAULT_EFFORT)
+    keys = []
+    for p in round_spec["personas"]:
+        k = seen.get((p, eff), 0)
+        seen[(p, eff)] = k + 1
+        keys.append(blind_key(p, eff, k, prompts))
+    return True, keys
 
 
 class RoundRunner:
@@ -455,6 +543,10 @@ class RoundRunner:
         self.summaries = 0
         self._lock = threading.Lock()
         self._cache: dict[tuple, list] = {}
+        self._tokens: dict[tuple, int] = {}               # completion tokens per recording, for reports
+        # of those, the tokens of answer-locked summaries (recorded with debate_mcq.SUMMARY_SPLIT on;
+        # absent from other recordings, whose tokens then all count)
+        self._summary_tokens: dict[tuple, int] = {}
         self.cache_path = Path(cache_path)
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         if self.cache_path.exists():                      # resume; errored rows skipped
@@ -469,9 +561,20 @@ class RoundRunner:
                     bad += 1
                     continue
                 if not r.get("error"):
-                    self._cache[(r["q"], r["k"], r["r"])] = r["responses"]
+                    key = (r["q"], r["k"], r["r"])
+                    self._cache[key] = r["responses"]
+                    if isinstance(r.get("usage"), list):
+                        self._tokens[key] = sum((u or {}).get("completion", 0) for u in r["usage"])
+                        self._summary_tokens[key] = sum((u or {}).get("summary", 0) for u in r["usage"])
             log(f"  resumed {len(self._cache)} cached rounds from {self.cache_path}"
                 + (f" ({bad} unreadable lines skipped)" if bad else ""))
+        if self.cache_path.exists() and self.cache_path.stat().st_size:
+            with self.cache_path.open("rb") as fh:          # a torn last line (a kill during a write)
+                fh.seek(-1, 2)                              # must not swallow the next recording
+                torn = fh.read(1) != b"\n"
+            if torn:
+                with self.cache_path.open("a") as fh:
+                    fh.write("\n")
         self._fh = self.cache_path.open("a")
         # No total: max_calls is a safety rail, not a workload estimate, and using
         # it as the denominator shows a meaningless 0%-of-2M bar. Question-level
@@ -526,43 +629,99 @@ class RoundRunner:
             if self._bar is not None:
                 self._bar.update(cost)
 
+    def lookup(self, qid: str, executed_specs: list[dict], round_spec: dict, rep: int = 0,
+               prompts: dict | None = None) -> tuple[bool, list[str], list | None, list[int]]:
+        """(per_speaker, keys, the cached (persona, response) pairs or None,
+        indices of the speakers not yet recorded). A blind round under v3 is
+        recorded speaker by speaker, so some of its speakers may be recorded and
+        others not; any other round is one recording."""
+        per_speaker, keys = round_keys(executed_specs, round_spec, prompts)
+        with self._lock:
+            hits = [self._cache.get((qid, k, rep)) for k in keys]
+        if not per_speaker:
+            if hits[0] is None:
+                return False, keys, None, list(range(len(round_spec["personas"])))
+            return False, keys, [tuple(pr) for pr in hits[0]], []
+        missing = [i for i, h in enumerate(hits) if h is None]
+        return True, keys, (None if missing else [tuple(h[0]) for h in hits]), missing
+
+    def round_tokens(self, qid: str, executed_specs: list[dict], round_spec: dict, rep: int = 0,
+                     prompts: dict | None = None) -> int:
+        """Completion tokens the recording(s) of this round used (0 if not logged)."""
+        _, keys = round_keys(executed_specs, round_spec, prompts)
+        with self._lock:
+            return sum(self._tokens.get((qid, k, rep), 0) for k in keys)
+
+    def round_summary_tokens(self, qid: str, executed_specs: list[dict], round_spec: dict, rep: int = 0,
+                             prompts: dict | None = None) -> int:
+        """Of round_tokens, the tokens of the round's answer-locked summaries (0 if not recorded apart)."""
+        _, keys = round_keys(executed_specs, round_spec, prompts)
+        with self._lock:
+            return sum(self._summary_tokens.get((qid, k, rep), 0) for k in keys)
+
     def run_round(self, qid: str, all_rounds: list, executed_specs: list[dict],
                   round_spec: dict, rep: int = 0,
                   prompts: dict | None = None) -> list[tuple[str, str]]:
         """Execute `round_spec` for `qid` on top of `all_rounds` (the transcript
         of `executed_specs`). Cached prefixes are free. Returns the new round's
-        (persona, response) pairs; an errored round returns []."""
-        key = (qid, path_key(executed_specs + [round_spec], prompts), rep)
-        with self._lock:
-            hit = self._cache.get(key)
+        (persona, response) pairs; an errored round returns []. Of a blind round
+        (v3), only the speakers not yet recorded are run, each recorded alone.
+        If another thread recorded the same key first, its recording is kept and
+        returned, so what a debate saw is always what a later replay reads."""
+        per_speaker, keys, hit, missing = self.lookup(qid, executed_specs, round_spec, rep, prompts)
         if hit is not None:
-            return [tuple(pr) for pr in hit]
+            return hit
+        spec = round_spec
+        if per_speaker:
+            spec = dict(round_spec, personas=[round_spec["personas"][i] for i in missing])
         row = self.rows[qid]
-        self.charge(len(round_spec["personas"]))
+        self.charge(len(spec["personas"]))
         err, responses = None, []
         for _ in range(2):                                # one retry on a transport hiccup
             try:
                 responses = D.execute_round(self._client(), self.model, row["question"],
-                                            list(row["options"]), round_spec, all_rounds,
-                                            self.temperature, self.answer_tokens, prompts)
+                                            list(row["options"]), spec, all_rounds,
+                                            self.temperature, self.answer_tokens, prompts,
+                                            prior_specs=executed_specs)
                 err = None
                 break
             except Exception as exc:
                 err = str(exc)
-        rec = {"q": qid, "k": key[1], "r": rep,
-               "responses": [list(pr) for pr in responses], "error": err}
-        if not err and (usage := D.last_round_usage()):
-            rec["usage"] = usage              # tokens per speaker; for reporting only, never read back
+        usage = None if err else D.last_round_usage()
+        if per_speaker:
+            recs = [{"q": qid, "k": keys[i], "r": rep,
+                     "responses": [] if err else [list(responses[j])], "error": err}
+                    for j, i in enumerate(missing)]
+            for j, rec in enumerate(recs):
+                if usage:
+                    rec["usage"] = [usage[j]]
+        else:
+            recs = [{"q": qid, "k": keys[0], "r": rep,
+                     "responses": [list(pr) for pr in responses], "error": err}]
+            if usage:
+                recs[0]["usage"] = usage          # tokens per speaker; for reporting only
         with self._lock:
             self.rounds_run += 1
             if err:
                 self.errors += 1
-            else:
-                self._cache[key] = rec["responses"]
-            self._fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            for rec in recs:
+                key = (qid, rec["k"], rep)
+                if key in self._cache:            # another thread recorded it first
+                    continue
+                if not err:
+                    self._cache[key] = rec["responses"]
+                    if "usage" in rec:
+                        self._tokens[key] = sum((u or {}).get("completion", 0) for u in rec["usage"])
+                        self._summary_tokens[key] = sum((u or {}).get("summary", 0) for u in rec["usage"])
+                self._fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
             self._fh.flush()
+            if not err:
+                if per_speaker:
+                    out = [tuple(self._cache[(qid, k, rep)][0]) for k in keys]
+                else:
+                    out = [tuple(pr) for pr in self._cache[(qid, keys[0], rep)]]
         self._postfix()
-        return responses
+        return [] if err else out
 
     def close(self) -> None:
         if self._bar is not None:

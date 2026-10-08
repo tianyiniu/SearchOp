@@ -2,7 +2,8 @@
 shape and pick a representative subset per group.
 
 Clustering is k-medoids over a chosen representation from embed_questions.py
-(multihot, template, or both), so every group centre is a real question. No
+(multihot, template, both, or description: the whole record embedded as one
+passage, centred on the training mean), so every group centre is a real question. No
 debate is run: everything here costs seconds.
 
 Choosing k without spending model calls. For each k we report:
@@ -67,8 +68,13 @@ def informative_multihot(vec: np.lib.npyio.NpzFile, max_mean: float) -> np.ndarr
     return mh[:, keep]
 
 
+def description_center(vec: np.lib.npyio.NpzFile) -> np.ndarray:
+    """The mean unit description vector of these (training) questions."""
+    return unit(vec["description"].astype(np.float64)).mean(axis=0)
+
+
 def representation(vec: np.lib.npyio.NpzFile, rep: str, mh_weight: float,
-                   max_mean: float) -> np.ndarray:
+                   max_mean: float, center: np.ndarray | None = None) -> np.ndarray:
     if rep == "multihot":
         return unit(informative_multihot(vec, max_mean))
     if rep == "template":
@@ -77,6 +83,16 @@ def representation(vec: np.lib.npyio.NpzFile, rep: str, mh_weight: float,
         mh = unit(informative_multihot(vec, max_mean)) * np.sqrt(mh_weight)
         te = unit(vec["template"].astype(np.float64)) * np.sqrt(1.0 - mh_weight)
         return np.concatenate([mh, te], axis=1)
+    if rep == "description":  # the whole record as one passage (embed_questions.description_text)
+        if "description" not in vec:
+            raise SystemExit("these vectors have no 'description' embedding; re-run embed_questions.py")
+        # Every description shares most of its text (headers, step and challenge
+        # definitions), so the raw vectors crowd into one direction (mean pairwise
+        # cosine 0.94). Subtracting the training questions' mean vector and
+        # renormalising spreads them out. Test questions are centred on the
+        # TRAINING mean, passed as `center` (route_questions.py).
+        x = unit(vec["description"].astype(np.float64))
+        return unit(x - (description_center(vec) if center is None else center))
     raise ValueError(rep)
 
 
@@ -172,11 +188,11 @@ def pick_subset(dist: np.ndarray, members: np.ndarray, medoid: int, n_pick: int,
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--vectors", type=Path, default=ROOT / "outputs/question_vectors_train.npz")
-    ap.add_argument("--templates", type=Path, default=ROOT / "outputs/question_templates_train.jsonl")
-    ap.add_argument("--dataset", type=Path, default=ROOT / "datasets/supergpqa_program_search_train.json")
-    ap.add_argument("--out", type=Path, default=ROOT / "outputs/clusters_train.json")
-    ap.add_argument("--rep", choices=["multihot", "template", "both"], default="both")
+    ap.add_argument("--vectors", type=Path, default=ROOT / "outputs/describe_v3/vectors_2k_train.npz")
+    ap.add_argument("--templates", type=Path, default=ROOT / "outputs/describe_v3/templates_train.jsonl")
+    ap.add_argument("--dataset", type=Path, default=ROOT / "datasets/supergpqa_2k_train.json")
+    ap.add_argument("--out", type=Path, default=ROOT / "outputs/describe_v3/clusters_2k_train.json")
+    ap.add_argument("--rep", choices=["multihot", "template", "both", "description"], default="description")
     ap.add_argument("--mh-weight", type=float, default=0.5, help="weight of the multi-hot block in --rep both")
     ap.add_argument("--mh-max-mean", type=float, default=0.9,
                     help="drop multi-hot columns present on more than this fraction of questions")
@@ -250,14 +266,14 @@ def main() -> None:
         sub = pick_subset(dist, members, int(med[j]), args.per_cluster, rng)
         held = [int(m) for m in members if m not in set(sub)]
         steps = Counter(s for m in members for s in recs[ids[m]]["steps"])
-        risks = Counter(recs[ids[m]]["risk"] for m in members)
+        challenges = Counter(ch for m in members for ch in recs[ids[m]]["challenges"])
         know = Counter(recs[ids[m]]["knowledge"] for m in members)
         discs = Counter(disc[m] for m in members)
         clusters.append({
             "cluster": j, "size": int(members.size), "medoid": ids[med[j]],
             "medoid_template": recs[ids[med[j]]]["template"],
             "steps": {s: round(c / members.size, 2) for s, c in steps.most_common()},
-            "risks": {r: round(c / members.size, 2) for r, c in risks.most_common()},
+            "challenges": {r: round(c / members.size, 2) for r, c in challenges.most_common()},
             "knowledge": {r: round(c / members.size, 2) for r, c in know.most_common()},
             "disciplines": {d: round(c / members.size, 2) for d, c in discs.most_common(5)},
             "subset": [ids[m] for m in sub],
@@ -286,19 +302,19 @@ def main() -> None:
         lines += [f"\n## Cluster {c['cluster']}: {c['size']} questions, subset {len(c['subset'])}, "
                   f"held out {len(c['held_out'])}",
                   f"- medoid template: {c['medoid_template']}",
-                  f"- steps: {c['steps']}", f"- risks: {c['risks']}",
+                  f"- steps: {c['steps']}", f"- challenges: {c['challenges']}",
                   f"- knowledge: {c['knowledge']}", f"- disciplines: {c['disciplines']}",
                   "- sample questions:"]
         for qid in [c["medoid"]] + [q for q in rng.permutation(c["members"]).tolist()[:5] if q != c["medoid"]]:
             row = rows[qid]
             lines.append(f"  - [{row['discipline']} / {row['field']}] {row['question'][:200].strip()}")
-            lines.append(f"    - {recs[qid]['template']}  (risk {recs[qid]['risk']})")
+            lines.append(f"    - {recs[qid]['template']}  (challenges {recs[qid]['challenges']})")
     rep_path = args.out.with_suffix(".md")
     rep_path.write_text("\n".join(lines) + "\n")
     print(f"wrote {args.out} and {rep_path}")
     for c in clusters:
         print(f"  cluster {c['cluster']}: {c['size']:>4} q  top steps "
-              f"{list(c['steps'])[:3]}  top risk {list(c['risks'])[:1]}  "
+              f"{list(c['steps'])[:3]}  top challenge {list(c['challenges'])[:1]}  "
               f"disciplines {list(c['disciplines'])[:2]}")
 
 
