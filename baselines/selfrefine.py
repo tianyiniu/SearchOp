@@ -39,6 +39,15 @@ supports (recover.py, as the debate executor does), and that reply is the turn's
 rest of the loop; if the last answer still names no letter, the most recent answer that did is
 the final one (the executor's last-commit read). Each turn's record keeps the original reply
 under "recovery"; "fell_back" marks a final answer taken from an earlier turn.
+
+A turn whose conversation leaves no room for a reply in the window (generate.no_room: under
+generate.MIN_ROOM tokens after request_one's cut) does not make the run an error, so every question
+gets a result (2026-10-08; before, the run stayed missing): INIT gives a run with no answer; a
+FEEDBACK turn (its request, or with --recover-feedback the recovery of an empty one) or a REFINE turn
+ends the loop with the answer so far, as a feedback that gives nothing to act on would; "no_room"
+names that turn. An answer's recovery with no room leaves the answer as it was cut off (recover.py).
+Seen on an HLE question drawn in block characters: about one Qwen token a character, so the
+recovery's 16,000-character reasoning tail filled the window.
 """
 import argparse
 import asyncio
@@ -51,7 +60,7 @@ import aiohttp
 from tqdm import tqdm
 
 import tasks
-from generate import question_messages, request_one, sample_seed
+from generate import no_room, question_messages, request_one, sample_seed
 from recover import answer_of, needs_recovery, recover, with_recovery
 
 # SuperGPQA's FEEDBACK and REFINE prompts (tasks.py has every dataset's)
@@ -107,7 +116,7 @@ async def main(args):
     sem = asyncio.Semaphore(args.concurrency)
     lock = asyncio.Lock()
     pbar = tqdm(total=len(todo), smoothing=0.05, dynamic_ncols=True)
-    stats = {"tokens": 0, "errors": 0, "stopped": 0, "iters": 0, "recovered": 0, "t0": time.time()}
+    stats = {"tokens": 0, "errors": 0, "stopped": 0, "iters": 0, "recovered": 0, "no_room": 0, "t0": time.time()}
     out_f = open(args.out, "a")
 
     timeout = aiohttp.ClientTimeout(total=None, sock_connect=30)
@@ -145,6 +154,7 @@ async def main(args):
                 # Only the visible answers go back into the history, never the thinking blocks.
                 messages = question_messages(item)
                 turns, err = [], None
+                ended = None                    # the turn (init, feedback, refine) that had no room
 
                 async def answer(seed, k):
                     """An answer turn (k = 0 for INIT, i + 1 for REFINE i) on the conversation so far;
@@ -159,7 +169,9 @@ async def main(args):
                     return with_recovery(got, fix), None
 
                 step, e = await answer(seed0, 0)
-                if e:
+                if no_room(e):
+                    ended = "init"
+                elif e:
                     err = e
                 else:
                     turns.append({"role": "init", **step})
@@ -175,8 +187,14 @@ async def main(args):
                             if not e:
                                 stats["recovered"] += fix["calls"] > 0
                                 fb = with_recovery(fb, fix)
+                                if fix.get("no_room") and not (fb["content"] or "").strip():
+                                    ended = "feedback"
+                                    break
                         if e:
-                            err = e
+                            if no_room(e):
+                                ended = "feedback"
+                            else:
+                                err = e
                             break
                         turns.append({"role": "feedback", **fb})
                         messages.append({"role": "assistant", "content": fb["content"] or ""})
@@ -185,7 +203,10 @@ async def main(args):
                         messages.append({"role": "user", "content": tasks.refine_prompt(item)})
                         rf, e = await answer(seed0 + 2000 + it, it + 1)
                         if e:
-                            err = e
+                            if no_room(e):
+                                ended = "refine"
+                            else:
+                                err = e
                             break
                         turns.append({"role": "refine", **rf})
                         messages.append({"role": "assistant", "content": rf["content"] or ""})
@@ -209,10 +230,11 @@ async def main(args):
                 "completion_tokens": sum(t["completion_tokens"] for t in turns),
                 "selfrefine": {
                     "n_refinements": n_refine,
-                    "stopped_early": n_refine < args.max_iters and err is None,
+                    "stopped_early": n_refine < args.max_iters and err is None and ended is None,
                     "init_answer": answers[0]["content"] if answers else None,
                     "recovered_turns": sum(t.get("recovery", {}).get("calls", 0) > 0 for t in turns),
                     "fell_back": fell_back,
+                    "no_room": ended,
                     "turns": turns if args.save_turns else
                              [{k: v for k, v in t.items() if k != "reasoning"} for t in turns],
                 },
@@ -221,6 +243,7 @@ async def main(args):
                 stats["errors"] += 1
             else:
                 stats["stopped"] += rec["selfrefine"]["stopped_early"]
+                stats["no_room"] += ended is not None
                 stats["iters"] += n_refine
             stats["tokens"] += rec["completion_tokens"]
 
@@ -240,7 +263,7 @@ async def main(args):
     el = time.time() - stats["t0"]
     print(f"finished {len(todo)} runs in {el / 3600:.2f}h, {stats['tokens'] / el:.0f} tok/s, "
           f"avg refinements {stats['iters'] / max(len(todo), 1):.2f}, stopped early {stats['stopped']}, "
-          f"errors {stats['errors']}")
+          f"ended for want of room {stats['no_room']}, errors {stats['errors']}")
 
 
 if __name__ == "__main__":

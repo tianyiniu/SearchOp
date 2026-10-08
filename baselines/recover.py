@@ -21,7 +21,9 @@ Every sample of --results is copied to --out. A recovered one keeps its original
 "recovery" and gets the recovery reply as "content" (what score.py reads), with the recovery's
 tokens added to "completion_tokens"; its finish_reason stays "length", so score.py's truncation
 rate still counts the cut-offs. Resumable: samples already in --out are skipped, and a failed
-request writes nothing, so running again retries it.
+request writes nothing, so running again retries it. A recovery call whose prompt leaves no room for
+a reply in the window (generate.no_room) is not made: the sample is written as it was cut off, with
+no answer, and its "recovery" says "no_room" (2026-10-08; before, it stayed without a result).
 
 HLE rows (hle_format.py) are asked in HLE's own format ('Exact Answer:' / 'Answer:' line), and
 their answer is read as score.py reads it (hle_format.extract); GPQA-Diamond and MATH rows in
@@ -37,7 +39,7 @@ import aiohttp
 from tqdm import tqdm
 
 import tasks
-from generate import question_messages, request_one, sample_seed
+from generate import no_room, question_messages, request_one, sample_seed
 
 TAIL_CHARS = 16000             # debate_mcq.THINKING_TAIL
 RECOVER_TOKENS = 2048
@@ -85,7 +87,9 @@ async def recover(session, url, args, messages: list[dict], reply: dict, item: d
     produced `reply` (ending with the user turn it answered). Returns (result, None) or (None, error);
     result is {"content", "completion_tokens", "calls"} ("content" None if there was nothing to show).
     `prompts` and `accept` (default: the dataset's answer prompts, and a reply with a readable
-    answer) let other turns use it: Self-Refine's feedback (tasks.feedback_recover_prompts)."""
+    answer) let other turns use it: Self-Refine's feedback (tasks.feedback_recover_prompts).
+    A call with no room for a reply (generate.no_room) ends it: the result says "no_room" and keeps
+    the content so far (None at the first call), so the reply stays as it was cut off."""
     text = shown_text(reply)
     if text is None:
         return {"content": None, "completion_tokens": 0, "calls": 0}, None
@@ -99,6 +103,8 @@ async def recover(session, url, args, messages: list[dict], reply: dict, item: d
                    "max_tokens": limit, "temperature": args.temperature, "top_p": args.top_p,
                    "seed": (seed + calls) % (2**31), **low_effort(args)}
         data, err = await request_one(session, url, payload, args.max_retries)
+        if no_room(err):
+            return {"content": content, "completion_tokens": tokens, "calls": calls, "no_room": True}, None
         if data is None:
             return None, err
         calls += 1
@@ -114,6 +120,8 @@ def with_recovery(reply: dict, got: dict) -> dict:
     out = dict(reply)
     out["recovery"] = {"original_content": reply.get("content"), "content": got["content"],
                        "completion_tokens": got["completion_tokens"], "calls": got["calls"]}
+    if got.get("no_room"):
+        out["recovery"]["no_room"] = True
     if got["content"] is not None:
         out["content"] = got["content"]
     out["completion_tokens"] = (reply.get("completion_tokens") or 0) + got["completion_tokens"]
@@ -179,7 +187,7 @@ async def main(args):
     sem = asyncio.Semaphore(args.concurrency)
     lock = asyncio.Lock()
     pbar = tqdm(total=len(need), dynamic_ncols=True)
-    stats = {"answered": 0, "errors": 0, "t0": time.time()}
+    stats = {"answered": 0, "no_room": 0, "errors": 0, "t0": time.time()}
     timeout = aiohttp.ClientTimeout(total=None, sock_connect=30)
     async with aiohttp.ClientSession(timeout=timeout, connector=aiohttp.TCPConnector(limit=0)) as session:
 
@@ -194,6 +202,7 @@ async def main(args):
                 else:
                     rec = with_recovery(r, got)
                     stats["answered"] += answer_of(rec["content"], item) is not None
+                    stats["no_room"] += bool(got.get("no_room"))
                     out_f.write(json.dumps(rec, ensure_ascii=False) + "\n")
                     out_f.flush()
                 pbar.update(1)
@@ -203,7 +212,8 @@ async def main(args):
     pbar.close()
     out_f.close()
     print(f"recovered {len(need)} cut-off samples in {time.time() - stats['t0']:.0f}s: {stats['answered']} now "
-          f"give an answer, {stats['errors']} failed requests (run again to retry them)")
+          f"give an answer, {stats['no_room']} had no room to ask, {stats['errors']} failed requests "
+          f"(run again to retry them)")
 
 
 if __name__ == "__main__":

@@ -296,15 +296,150 @@ def test_window(port, fake):
     (n1, (d1, e1)), (_, (d2, e2)), (_, (d3, e3)) = asyncio.run(go())
     assert e1 is None and d1["max_tokens_cut"] == 32768 - n1 - CONTEXT_MARGIN, (e1, d1)
     assert e2 is None and "max_tokens_cut" not in d2
-    assert e3 is not None and "maximum context length" in e3
+    assert e3 is not None and e3.startswith("no room") and "maximum context length" in e3, e3
     assert fake.rejected >= 2
-    print("window: a too-long request is cut to fit; one that fits is unchanged; no room is an error")
+    print("window: a too-long request is cut to fit; one that fits is unchanged; no room returns 'no room'")
+
+
+def test_sr_no_room(port, fake):
+    """Self-Refine: a FEEDBACK or REFINE turn with no room left in the window ends the loop with the
+    answer so far (no error); the question lengths are chosen so that each case happens."""
+    from generate import MIN_ROOM, CONTEXT_MARGIN, question_messages, sample_seed
+    full = 32768 - MIN_ROOM - CONTEXT_MARGIN             # the longest prompt that still gets a reply
+
+    def item(qid, pad):
+        return {"id": qid, "question": "Compute x = 4\n" + "x" * pad, "options": [], "answer": "4",
+                "dataset": "math", "discipline": "Algebra", "field": "Algebra", "subfield": "Algebra",
+                "difficulty": "Level 5"}
+
+    def ids(ok):                                          # ids whose seeds give the fake's replies we need
+        return next(f"nr{i}" for i in range(10000) if ok(sample_seed(f"nr{i}", 0)))
+
+    def pad_for(qid, turn_msgs, target):                 # the padding that makes those messages count `target`
+        lo, hi = 0, 4 * 33000
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if Fake.count(turn_msgs(item(qid, mid))) <= target: lo = mid
+            else: hi = mid - 1
+        return lo
+
+    def init_reply(it):
+        return fake.answer("math", sample_seed(it["id"], 0), "Compute x = 4")
+
+    def fb_msgs(it):
+        return question_messages(it) + [{"role": "assistant", "content": init_reply(it)},
+                                        {"role": "user", "content": tasks.feedback_prompt(it)}]
+
+    def rf_msgs(it):
+        return fb_msgs(it) + [{"role": "assistant", "content": "Step 2 is wrong."},
+                              {"role": "user", "content": tasks.refine_prompt(it)}]
+
+    # 1: the first answer fits, the FEEDBACK turn does not
+    q1 = ids(lambda s: s % 7)
+    a = item(q1, pad_for(q1, question_messages, full))
+    assert Fake.count(fb_msgs(a)) > full
+    # 2: the FEEDBACK turn fits and finds an error; the REFINE turn does not
+    q2 = ids(lambda s: s % 7 and (s + 1000) % 5 and (s + 1000) % 2)
+    b = item(q2, pad_for(q2, fb_msgs, full))
+    assert Fake.count(fb_msgs(b)) <= full < Fake.count(rf_msgs(b))
+    with tempfile.TemporaryDirectory() as tmp:
+        data, out = Path(tmp) / "long.json", Path(tmp) / "sr.jsonl"
+        data.write_text(json.dumps([a, b]))
+        res = subprocess.run([sys.executable, str(HERE / "selfrefine.py"), "--data", str(data), "--out", str(out),
+                              "--endpoints", f"http://127.0.0.1:{port}", "--model", "Qwen/Qwen3.5-9B", "--k", "1",
+                              "--family", "qwen", "--max-iters", "2", "--max-tokens", "28672",
+                              "--feedback-max-tokens", "24576", "--recover", "--recover-feedback"],
+                             capture_output=True, text=True)
+        assert res.returncode == 0, res.stderr[-2000:]
+        recs = {r["id"]: r for r in map(json.loads, out.read_text().splitlines())}
+    r1, r2 = recs[q1], recs[q2]
+    for r, ended, roles in ((r1, "feedback", ["init"]), (r2, "refine", ["init", "feedback"])):
+        sr = r["selfrefine"]
+        assert r["error"] is None, r["error"]
+        assert sr["no_room"] == ended and not sr["stopped_early"] and sr["n_refinements"] == 0, sr
+        assert [t["role"] for t in sr["turns"]] == roles, sr["turns"]
+        assert r["content"] == sr["init_answer"] == init_reply(a if r is r1 else b), r["content"]
+    assert sr["turns"][1]["content"] == "Step 2 is wrong."
+    assert "ended for want of room 2, errors 0" in res.stdout, res.stdout[-500:]
+    print("Self-Refine: no room for FEEDBACK or REFINE ends the loop with the answer so far")
+
+
+def test_no_room(port, fake):
+    """Every method gives each question a result when a call has no room in the window: Direct CoT
+    a sample with no answer, recovery the reply as it was cut off, Self-Refine's first answer a run
+    with no answer, a MAD agent its reply of the round before (none in round 1)."""
+    from generate import MIN_ROOM, CONTEXT_MARGIN, question_messages, sample_seed
+    full = 32768 - MIN_ROOM - CONTEXT_MARGIN             # the longest prompt that still gets a reply
+
+    def item(qid, pad):
+        return {"id": qid, "question": "Compute x = 4\n" + "x" * pad, "options": [], "answer": "4",
+                "dataset": "math", "discipline": "Algebra", "field": "Algebra", "subfield": "Algebra",
+                "difficulty": "Level 5"}
+
+    def pad_for(qid, target):                            # the padding that makes the question count `target`
+        lo, hi = 0, 4 * 33000
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if Fake.count(question_messages(item(qid, mid))) <= target: lo = mid
+            else: hi = mid - 1
+        return lo
+
+    cut_id = next(f"cut{i}" for i in range(10000) if sample_seed(f"cut{i}", 0) % 7 == 0)   # the fake cuts it off
+    too_long = item("long", pad_for("long", full + 50))                # no room for any reply
+    no_recovery = item(cut_id, pad_for(cut_id, full - 1))              # a reply fits; its recovery does not
+    debate = item("deb", pad_for("deb", full - 50))                    # round 1 fits; round 2 does not
+    py = [sys.executable]
+    common = ["--endpoints", f"http://127.0.0.1:{port}", "--model", "Qwen/Qwen3.5-9B", "--family", "qwen", "--k", "1"]
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+
+        def call(script, rows, *extra):
+            data, out = tmp / f"{script}.json", tmp / f"{script}.jsonl"
+            data.write_text(json.dumps(rows))
+            res = subprocess.run(py + [str(HERE / script), "--data", str(data), "--out", str(out), *common, *extra],
+                                 capture_output=True, text=True)
+            assert res.returncode == 0, (script, res.stderr[-2000:])
+            return {r["id"]: r for r in map(json.loads, out.read_text().splitlines())}, res.stdout
+
+        direct, out = call("generate.py", [too_long, no_recovery], "--max-tokens", "28672")
+        assert "no room=1, errors=0" in out, out
+        d = direct["long"]
+        assert d["error"] is None and d["content"] is None and d["finish_reason"] == "no_room", d
+        assert direct[cut_id]["finish_reason"] == "length" and direct[cut_id]["max_tokens_cut"] == 1025
+        data = tmp / "direct.json"
+        data.write_text(json.dumps([too_long, no_recovery]))
+        res = subprocess.run(py + [str(HERE / "recover.py"), "--data", str(data), "--results", str(tmp / "generate.py.jsonl"),
+                                   "--out", str(tmp / "rec.jsonl"), *[a for a in common if a not in ("--k", "1")]],
+                             capture_output=True, text=True)
+        assert res.returncode == 0 and "1 had no room to ask, 0 failed" in res.stdout, (res.stdout, res.stderr[-1500:])
+        rec = {r["id"]: r for r in map(json.loads, (tmp / "rec.jsonl").read_text().splitlines())}
+        assert set(rec) == {"long", cut_id}, rec.keys()                   # both questions have a result
+        r = rec[cut_id]
+        assert r["error"] is None and r["recovery"]["no_room"] and r["recovery"]["calls"] == 0, r["recovery"]
+        assert tasks.answer_of(r["content"], no_recovery) is None
+
+        sr, out = call("selfrefine.py", [too_long], "--max-iters", "2", "--recover", "--recover-feedback")
+        s = sr["long"]
+        assert s["error"] is None and s["content"] is None and s["selfrefine"]["no_room"] == "init", s
+        assert "ended for want of room 1, errors 0" in out, out
+
+        mad, out = call("mad.py", [too_long, debate], "--agents", "3", "--rounds", "2")
+        assert "turns with no room 9, errors 0" in out, out      # "long": 3 + 3, "deb": 3 in round 2
+        m = mad["long"]
+        assert m["error"] is None and m["finals"] == [None] * 3, m
+        m = mad["deb"]
+        first, second = m["mad"]["turns"]
+        assert m["error"] is None and m["finals"] == [t["content"] for t in first], m
+        assert [t["finish_reason"] for t in second] == ["no_room"] * 3 and sum(t["completion_tokens"] for t in second) == 0
+    print("no room: Direct CoT, recovery, Self-Refine and MAD give every question a result")
 
 
 def test_run():
     fake = Fake()
     port = serve(fake)
     test_window(port, fake)
+    test_sr_no_room(port, fake)
+    test_no_room(port, fake)
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         data = datasets(tmp)

@@ -1,0 +1,2387 @@
+{
+ "clusters": "outputs/describe_v3/clusters_600_train.json",
+ "rep": "description",
+ "mh_weight": 0.5,
+ "mh_max_mean": 0.9,
+ "knn_k": 10,
+ "train_agreement": 1.0,
+ "embed_model": "microsoft/harrier-oss-v1-0.6b",
+ "routes": {
+  "rec4JrWy7Il8ho5vk": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.278417,
+   "distances": {
+    "0": 0.879855,
+    "1": 1.158272,
+    "2": 1.168804
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recGFKDUd8qgz81Zl": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.199311,
+   "distances": {
+    "0": 0.737427,
+    "1": 0.936738,
+    "2": 1.331624
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recIMcQfaQNa6vzsT": {
+   "group": 0,
+   "second": 1,
+   "margin": 1.00714,
+   "distances": {
+    "0": 0.438352,
+    "1": 1.445493,
+    "2": 1.453688
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recKv4hFyNpViUXnL": {
+   "group": 0,
+   "second": 1,
+   "margin": 1.027574,
+   "distances": {
+    "0": 0.397045,
+    "1": 1.424619,
+    "2": 1.439746
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recXvQ6gWAmyakrpD": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.939402,
+   "distances": {
+    "0": 0.449349,
+    "1": 1.470385,
+    "2": 1.388751
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "receYQxnUBvxPcvbQ": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.790411,
+   "distances": {
+    "0": 0.574966,
+    "1": 1.429593,
+    "2": 1.365377
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recgXxEgllSGEpELP": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.169235,
+   "distances": {
+    "0": 0.941364,
+    "1": 1.116356,
+    "2": 1.110599
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "reczUoM8JsxU6pYxr": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.489632,
+   "distances": {
+    "0": 0.626376,
+    "1": 1.116008,
+    "2": 1.360837
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec32C1ZEapBnCC0E": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.948622,
+   "distances": {
+    "0": 0.469985,
+    "1": 1.514124,
+    "2": 1.418607
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recVE8cUNHpHZIAvL": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.444806,
+   "distances": {
+    "0": 0.737061,
+    "1": 1.18221,
+    "2": 1.181866
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "reccVBrYdwsB84fGy": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.170544,
+   "distances": {
+    "0": 0.869598,
+    "1": 1.040142,
+    "2": 1.134637
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recwW1A85nfyQpReG": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.818615,
+   "distances": {
+    "0": 0.552029,
+    "1": 1.370644,
+    "2": 1.406389
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recyrk6XBVwugG5u8": {
+   "group": 0,
+   "second": 1,
+   "margin": 1.033154,
+   "distances": {
+    "0": 0.437528,
+    "1": 1.470682,
+    "2": 1.48493
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec7C06XOB2h298ue": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.998269,
+   "distances": {
+    "0": 0.435559,
+    "1": 1.433828,
+    "2": 1.447938
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec9ubQihAh6g9bft": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.222767,
+   "distances": {
+    "0": 1.458403,
+    "1": 0.624571,
+    "2": 0.847338
+   },
+   "knn": 1,
+   "question": 0
+  },
+  "recL9MFV5zmdlle5T": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.48592,
+   "distances": {
+    "0": 0.710078,
+    "1": 1.195998,
+    "2": 1.329408
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recLSzwBUS3olCjhl": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.025092,
+   "distances": {
+    "0": 1.054334,
+    "1": 1.08117,
+    "2": 1.079426
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recNFJjE5PPTqVJGv": {
+   "group": 0,
+   "second": 2,
+   "margin": 1.070242,
+   "distances": {
+    "0": 0.282729,
+    "1": 1.504594,
+    "2": 1.352971
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recQiWOxhkXRz9NVE": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.032608,
+   "distances": {
+    "0": 0.918357,
+    "1": 0.950965,
+    "2": 1.154244
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recWzUUYBN0NuXO2k": {
+   "group": 0,
+   "second": 1,
+   "margin": 1.099065,
+   "distances": {
+    "0": 0.380256,
+    "1": 1.479321,
+    "2": 1.482963
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recYOzCsevNz61Lyn": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.301704,
+   "distances": {
+    "0": 0.881478,
+    "1": 1.183182,
+    "2": 1.272712
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recZbxrocrxh9YENH": {
+   "group": 0,
+   "second": 2,
+   "margin": 1.090375,
+   "distances": {
+    "0": 0.308861,
+    "1": 1.515568,
+    "2": 1.399236
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recb2M22zaD3tL6Qc": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.071227,
+   "distances": {
+    "0": 1.015843,
+    "1": 0.944615,
+    "2": 1.261539
+   },
+   "knn": 1,
+   "question": 0
+  },
+  "rechtUKxC6G67H7Pr": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.049406,
+   "distances": {
+    "0": 1.010675,
+    "1": 1.060081,
+    "2": 1.155341
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recooG6bivTUJpDBz": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.407626,
+   "distances": {
+    "0": 0.804218,
+    "1": 1.280844,
+    "2": 1.211844
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recoy9ZLBsc7HIRBy": {
+   "group": 0,
+   "second": 2,
+   "margin": 1.041893,
+   "distances": {
+    "0": 0.335386,
+    "1": 1.555696,
+    "2": 1.377278
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recpJmTOXx6T48nDJ": {
+   "group": 0,
+   "second": 2,
+   "margin": 1.181634,
+   "distances": {
+    "0": 0.242829,
+    "1": 1.459608,
+    "2": 1.424463
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recqLRu4BcJvlSANc": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.036735,
+   "distances": {
+    "0": 0.942974,
+    "1": 0.906239,
+    "2": 1.254239
+   },
+   "knn": 1,
+   "question": 0
+  },
+  "recuyeuT5rQ6qDt8F": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.447346,
+   "distances": {
+    "0": 0.679851,
+    "1": 1.127197,
+    "2": 1.327068
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recv7GsQg3f0fvB1f": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.435409,
+   "distances": {
+    "0": 1.15876,
+    "1": 0.723351,
+    "2": 1.168074
+   },
+   "knn": 1,
+   "question": 0
+  },
+  "rec1oj2DveQWl9Rpw": {
+   "group": 0,
+   "second": 2,
+   "margin": 1.090094,
+   "distances": {
+    "0": 0.30236,
+    "1": 1.511892,
+    "2": 1.392453
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec47oNPXudlTIk4y": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.42196,
+   "distances": {
+    "0": 1.373551,
+    "1": 0.430969,
+    "2": 0.852929
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "reczkBiPPNrNN49Hp": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.787523,
+   "distances": {
+    "0": 0.51745,
+    "1": 1.446644,
+    "2": 1.304973
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recWXwn9v4IG9ZrM6": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.10736,
+   "distances": {
+    "0": 1.477909,
+    "1": 0.616871,
+    "2": 0.724231
+   },
+   "knn": 1,
+   "question": 0
+  },
+  "rec0yTRmO1o1xCA6H": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.22934,
+   "distances": {
+    "0": 1.242517,
+    "1": 0.842604,
+    "2": 1.071944
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "recKm6LNWykGapmCr": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.567982,
+   "distances": {
+    "0": 0.664509,
+    "1": 1.232491,
+    "2": 1.395452
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recV1nqYQvpII94oC": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.599368,
+   "distances": {
+    "0": 0.713515,
+    "1": 1.371543,
+    "2": 1.312882
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recqFDvYKKRmbnoUb": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.515689,
+   "distances": {
+    "0": 0.698179,
+    "1": 1.213868,
+    "2": 1.376065
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recMicVBcqy1xM1jq": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.446008,
+   "distances": {
+    "0": 0.758021,
+    "1": 1.204029,
+    "2": 1.294081
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recoiTJPGUmzAkief": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.794048,
+   "distances": {
+    "0": 0.536113,
+    "1": 1.330161,
+    "2": 1.407434
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec2ZTsqazBZ3LTWZ": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.206131,
+   "distances": {
+    "0": 0.867427,
+    "1": 1.073558,
+    "2": 1.329024
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recD8oX1KevFbl7bL": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.348075,
+   "distances": {
+    "0": 0.823728,
+    "1": 1.171804,
+    "2": 1.299828
+   },
+   "knn": 0,
+   "question": 1
+  },
+  "reczQ4I0VpENdMtIj": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.330711,
+   "distances": {
+    "0": 1.170852,
+    "1": 0.840141,
+    "2": 1.208889
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "recAYkd96NNuNl1Ei": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.255385,
+   "distances": {
+    "0": 1.331558,
+    "1": 0.676157,
+    "2": 0.931542
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "rec2UlKqC6RFHdcro": {
+   "group": 0,
+   "second": 1,
+   "margin": 1.199971,
+   "distances": {
+    "0": 0.245197,
+    "1": 1.445168,
+    "2": 1.520829
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec4UqStf9WUVif1f": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.969422,
+   "distances": {
+    "0": 0.474631,
+    "1": 1.466602,
+    "2": 1.444053
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recDytVnNYZe2HuUU": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.917214,
+   "distances": {
+    "0": 0.443192,
+    "1": 1.360406,
+    "2": 1.367178
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recKcjTwONILZqHAX": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.399458,
+   "distances": {
+    "0": 0.744808,
+    "1": 1.25388,
+    "2": 1.144266
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recNAiPUKOulQbKVP": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.206077,
+   "distances": {
+    "0": 1.419049,
+    "1": 0.528016,
+    "2": 0.734093
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "recPL4ZPpVYxgMu57": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.19683,
+   "distances": {
+    "0": 1.324634,
+    "1": 0.774877,
+    "2": 0.971707
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "recQ8oxSY2aCwFRS8": {
+   "group": 0,
+   "second": 2,
+   "margin": 1.050945,
+   "distances": {
+    "0": 0.393165,
+    "1": 1.447856,
+    "2": 1.44411
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recpki12iG9RUGrz9": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.422579,
+   "distances": {
+    "0": 0.770304,
+    "1": 1.192884,
+    "2": 1.224556
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recqGD3fxPCI59vPQ": {
+   "group": 0,
+   "second": 1,
+   "margin": 1.027707,
+   "distances": {
+    "0": 0.325209,
+    "1": 1.352915,
+    "2": 1.447182
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rect4iLrSfUwkNTno": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.920404,
+   "distances": {
+    "0": 0.479344,
+    "1": 1.448267,
+    "2": 1.399748
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recuYEkVjdVUwA3c0": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.567812,
+   "distances": {
+    "0": 0.649634,
+    "1": 1.217445,
+    "2": 1.2577
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec6sE2CRtD4drtHg": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.925172,
+   "distances": {
+    "0": 0.412093,
+    "1": 1.529786,
+    "2": 1.337265
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recReg13iV2HwJTaA": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.191269,
+   "distances": {
+    "0": 0.900286,
+    "1": 1.091555,
+    "2": 1.293462
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recgC4GJ8wUemlUQD": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.02682,
+   "distances": {
+    "0": 1.502976,
+    "1": 0.558649,
+    "2": 0.585469
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "recOkA2zsy4GSMD9R": {
+   "group": 0,
+   "second": 2,
+   "margin": 1.090116,
+   "distances": {
+    "0": 0.330765,
+    "1": 1.439371,
+    "2": 1.420881
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec4L69T0Y1AS4AFS": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.226873,
+   "distances": {
+    "0": 1.467675,
+    "1": 0.540386,
+    "2": 0.767259
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "rec527dNeEtWJrYNl": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.356628,
+   "distances": {
+    "0": 1.156372,
+    "1": 0.718833,
+    "2": 1.075461
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "recBtVK8rBVtIlXDq": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.03315,
+   "distances": {
+    "0": 1.136411,
+    "1": 0.9526,
+    "2": 0.98575
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "recIOlKBsOeEcgkA1": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.305126,
+   "distances": {
+    "0": 1.226087,
+    "1": 0.692014,
+    "2": 0.99714
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "recTs7qzfJs6kfLUK": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.356882,
+   "distances": {
+    "0": 0.763682,
+    "1": 1.120564,
+    "2": 1.310866
+   },
+   "knn": 0,
+   "question": 1
+  },
+  "recUBgVlkKzcRPDdK": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.148179,
+   "distances": {
+    "0": 0.843072,
+    "1": 0.991251,
+    "2": 1.331006
+   },
+   "knn": 0,
+   "question": 1
+  },
+  "recVvpD8miVjmmyfe": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.607573,
+   "distances": {
+    "0": 0.637957,
+    "1": 1.428651,
+    "2": 1.24553
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recYt8xx80OTyDsL0": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.454642,
+   "distances": {
+    "0": 1.154783,
+    "1": 0.700142,
+    "2": 1.175388
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "recZdZxsN0AxDx0pB": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.599371,
+   "distances": {
+    "0": 0.581941,
+    "1": 1.181312,
+    "2": 1.429918
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recafnH3RRnMBXEb1": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.323644,
+   "distances": {
+    "0": 1.345453,
+    "1": 0.578103,
+    "2": 0.901747
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "reccVFW11Elovnf8T": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.392504,
+   "distances": {
+    "0": 0.722574,
+    "1": 1.115078,
+    "2": 1.365935
+   },
+   "knn": 0,
+   "question": 1
+  },
+  "recf6ayQmL1SxKbvW": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.077892,
+   "distances": {
+    "0": 1.095096,
+    "1": 1.017204,
+    "2": 1.195911
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "recnTTKdBzfuoZ7w7": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.424094,
+   "distances": {
+    "0": 0.756604,
+    "1": 1.434439,
+    "2": 1.180698
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recw4rROcnHKNZhtK": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.324539,
+   "distances": {
+    "0": 1.136605,
+    "1": 0.812066,
+    "2": 1.216605
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "recypVp2NmPlBKVTp": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.197203,
+   "distances": {
+    "0": 1.296189,
+    "1": 0.783698,
+    "2": 0.980902
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "reczjcMtrB1YGS2fO": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.773446,
+   "distances": {
+    "0": 0.54429,
+    "1": 1.317736,
+    "2": 1.452581
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec0Arme2jcXQZnAW": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.906202,
+   "distances": {
+    "0": 0.460645,
+    "1": 1.442088,
+    "2": 1.366848
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec2fsnzUuvNtUYK8": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.308344,
+   "distances": {
+    "0": 1.074923,
+    "1": 0.76658,
+    "2": 1.203884
+   },
+   "knn": 1,
+   "question": 0
+  },
+  "rec4r4KWNLrT7g2kR": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.700361,
+   "distances": {
+    "0": 0.612034,
+    "1": 1.411132,
+    "2": 1.312395
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec5rjeLsEq5Fg7Oj": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.125473,
+   "distances": {
+    "0": 0.83658,
+    "1": 0.962054,
+    "2": 1.242493
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec8nshandHARTkrg": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.641609,
+   "distances": {
+    "0": 0.635898,
+    "1": 1.400127,
+    "2": 1.277507
+   },
+   "knn": 0,
+   "question": 1
+  },
+  "rec9GugrngvsQR99A": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.110754,
+   "distances": {
+    "0": 1.118836,
+    "1": 1.008082,
+    "2": 1.133286
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "recA1i5ZAh0Uzclxp": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.563031,
+   "distances": {
+    "0": 0.705485,
+    "1": 1.443189,
+    "2": 1.268516
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recAAJoHMW45Lv5je": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.667333,
+   "distances": {
+    "0": 0.629769,
+    "1": 1.297102,
+    "2": 1.350814
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recBGxVySx1pkrO1i": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.451529,
+   "distances": {
+    "0": 0.793205,
+    "1": 1.244734,
+    "2": 1.26557
+   },
+   "knn": 0,
+   "question": 1
+  },
+  "recBXlqrZUCR897It": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.27681,
+   "distances": {
+    "0": 0.885196,
+    "1": 1.162006,
+    "2": 1.250369
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recCJJOeBGERaHYax": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.752961,
+   "distances": {
+    "0": 0.608103,
+    "1": 1.371772,
+    "2": 1.361064
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recDDxpS9s8cwkqfq": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.255452,
+   "distances": {
+    "0": 0.700436,
+    "1": 0.955889,
+    "2": 1.328927
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recDj2Y2BbtV02Wv5": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.223198,
+   "distances": {
+    "0": 1.059698,
+    "1": 0.8365,
+    "2": 1.119217
+   },
+   "knn": 1,
+   "question": 0
+  },
+  "recEmTBhx2hgw6tPQ": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.376924,
+   "distances": {
+    "0": 0.805817,
+    "1": 1.182741,
+    "2": 1.193006
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recFaL6j8UMhutXrc": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.734439,
+   "distances": {
+    "0": 0.604775,
+    "1": 1.380012,
+    "2": 1.339214
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recGFNRVl1qBZGwyU": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.860411,
+   "distances": {
+    "0": 0.507812,
+    "1": 1.368223,
+    "2": 1.385258
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recHVUd2DkoKfedJZ": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.758468,
+   "distances": {
+    "0": 0.598145,
+    "1": 1.379699,
+    "2": 1.356613
+   },
+   "knn": 0,
+   "question": 1
+  },
+  "recIDiDKKrN61Auyr": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.139249,
+   "distances": {
+    "0": 1.217386,
+    "1": 0.854657,
+    "2": 0.993905
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "recINSFEYLCyyd08m": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.213512,
+   "distances": {
+    "0": 0.858578,
+    "1": 1.249683,
+    "2": 1.072089
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recIlghoOw5VbY4Zh": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.444256,
+   "distances": {
+    "0": 0.689699,
+    "1": 1.133955,
+    "2": 1.420114
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recJJcOHhFeSaRpl4": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.028706,
+   "distances": {
+    "0": 1.082268,
+    "1": 1.053562,
+    "2": 1.131024
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recJZ3QEfRKjYw9a7": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.592822,
+   "distances": {
+    "0": 0.597999,
+    "1": 1.190821,
+    "2": 1.401108
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recK9F5aqdaybl8bb": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.750775,
+   "distances": {
+    "0": 0.598318,
+    "1": 1.408787,
+    "2": 1.349093
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recLAgwx9vbgB5EHk": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.641758,
+   "distances": {
+    "0": 0.687999,
+    "1": 1.329756,
+    "2": 1.331132
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recNuT2oSnO86bxOx": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.584534,
+   "distances": {
+    "0": 0.673807,
+    "1": 1.261744,
+    "2": 1.258341
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recO3hvCWRGiG0odN": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.627849,
+   "distances": {
+    "0": 0.639451,
+    "1": 1.392904,
+    "2": 1.267299
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recOvqPKUtyy9ISA1": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.668256,
+   "distances": {
+    "0": 0.634228,
+    "1": 1.302484,
+    "2": 1.374919
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recRgabRzMaEoBRcM": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.715714,
+   "distances": {
+    "0": 0.548351,
+    "1": 1.264065,
+    "2": 1.418358
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recUOePh79cp4T2Bg": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.769697,
+   "distances": {
+    "0": 0.597769,
+    "1": 1.416616,
+    "2": 1.367466
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recVEXvhYxAhELVqB": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.567817,
+   "distances": {
+    "0": 0.680726,
+    "1": 1.248543,
+    "2": 1.298406
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recWPMm91mGDLXONm": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.508837,
+   "distances": {
+    "0": 0.738525,
+    "1": 1.247363,
+    "2": 1.307655
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recWxGU8Q4YReJ1tb": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.703345,
+   "distances": {
+    "0": 0.635366,
+    "1": 1.338711,
+    "2": 1.347765
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recYA3LPsCvF1fTMI": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.536918,
+   "distances": {
+    "0": 0.706099,
+    "1": 1.243017,
+    "2": 1.348591
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recZ13cwgDQf9jRd9": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.366634,
+   "distances": {
+    "0": 0.716974,
+    "1": 1.083608,
+    "2": 1.288444
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recZSGUkn56v9kEp1": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.67002,
+   "distances": {
+    "0": 0.592952,
+    "1": 1.262972,
+    "2": 1.332566
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recZWeueB7lSPR6wN": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.657546,
+   "distances": {
+    "0": 0.667274,
+    "1": 1.32482,
+    "2": 1.341729
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recZt4x514UQNnsgy": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.341138,
+   "distances": {
+    "0": 0.808729,
+    "1": 1.149867,
+    "2": 1.230853
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "reca44yABeO2fx7UB": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.748892,
+   "distances": {
+    "0": 0.500556,
+    "1": 1.249448,
+    "2": 1.351923
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recakFKZioXUuldcd": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.492858,
+   "distances": {
+    "0": 0.695767,
+    "1": 1.188626,
+    "2": 1.340058
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recb4cGsC6BJUCU3V": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.587926,
+   "distances": {
+    "0": 0.671514,
+    "1": 1.289169,
+    "2": 1.25944
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "reccOKzFNmyqeJ6ry": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.144343,
+   "distances": {
+    "0": 0.912738,
+    "1": 1.057082,
+    "2": 1.23155
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recclFbsjbaiVVnnV": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.751371,
+   "distances": {
+    "0": 0.585638,
+    "1": 1.337009,
+    "2": 1.38377
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "receo3UUzRvWCqyfA": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.13895,
+   "distances": {
+    "0": 0.932481,
+    "1": 1.071431,
+    "2": 1.286572
+   },
+   "knn": 1,
+   "question": 0
+  },
+  "rechKl68Uc6H7vU0N": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.540595,
+   "distances": {
+    "0": 0.725116,
+    "1": 1.3205,
+    "2": 1.265712
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recihePFulRgNKsIn": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.183867,
+   "distances": {
+    "0": 1.153784,
+    "1": 0.954857,
+    "2": 1.138724
+   },
+   "knn": 1,
+   "question": 0
+  },
+  "recjJ54TXc04enRkZ": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.411726,
+   "distances": {
+    "0": 0.777313,
+    "1": 1.189039,
+    "2": 1.273414
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recjgMJaMxz4ESDF2": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.167538,
+   "distances": {
+    "0": 1.072046,
+    "1": 0.904508,
+    "2": 1.202534
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "reck1zKeCssmN82Ga": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.252651,
+   "distances": {
+    "0": 0.859376,
+    "1": 1.112028,
+    "2": 1.287773
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "reck4G4xxv3YnpbtQ": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.497621,
+   "distances": {
+    "0": 0.713799,
+    "1": 1.401869,
+    "2": 1.211419
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "reckl6PkaEMWM50yZ": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.565842,
+   "distances": {
+    "0": 0.703326,
+    "1": 1.269168,
+    "2": 1.296041
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recl1UtgTVKishAq4": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.648115,
+   "distances": {
+    "0": 0.563833,
+    "1": 1.211948,
+    "2": 1.425777
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recn3NhOhqAPLda16": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.577611,
+   "distances": {
+    "0": 0.650134,
+    "1": 1.227745,
+    "2": 1.427638
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recnGEpF1srQpaqWq": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.505263,
+   "distances": {
+    "0": 0.717833,
+    "1": 1.248066,
+    "2": 1.223096
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recnawZPumSCLMVgp": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.693574,
+   "distances": {
+    "0": 0.548753,
+    "1": 1.242327,
+    "2": 1.390149
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "reco8WSc71p8zAv4q": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.451367,
+   "distances": {
+    "0": 0.784152,
+    "1": 1.235519,
+    "2": 1.30829
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recr3VHM4zYf6dMFY": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.152044,
+   "distances": {
+    "0": 0.99721,
+    "1": 1.149254,
+    "2": 1.1874
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recrHBEJJoDTV05JR": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.031766,
+   "distances": {
+    "0": 0.939777,
+    "1": 0.908011,
+    "2": 1.097832
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recrNbtgTNoabJJi6": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.798649,
+   "distances": {
+    "0": 0.531636,
+    "1": 1.330285,
+    "2": 1.410832
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recs3PLPUEMiqg4P8": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.504756,
+   "distances": {
+    "0": 0.747471,
+    "1": 1.339723,
+    "2": 1.252227
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rectXfsCM1dj4Kv2c": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.515682,
+   "distances": {
+    "0": 0.702976,
+    "1": 1.218658,
+    "2": 1.297486
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rectlyG9pCAAuWhoB": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.332953,
+   "distances": {
+    "0": 0.854561,
+    "1": 1.187514,
+    "2": 1.211875
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recvZlMbpPz0yLDle": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.665196,
+   "distances": {
+    "0": 0.618311,
+    "1": 1.329832,
+    "2": 1.283507
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recxTy0x7M6T9ikc0": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.743162,
+   "distances": {
+    "0": 0.600413,
+    "1": 1.403301,
+    "2": 1.343575
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recxsX66ktJ1Lwt4f": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.067581,
+   "distances": {
+    "0": 1.000027,
+    "1": 0.932446,
+    "2": 1.027469
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recyl3usDqb7ruXJx": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.35709,
+   "distances": {
+    "0": 0.76924,
+    "1": 1.12633,
+    "2": 1.36942
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recGee5m84dg5FZkc": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.02087,
+   "distances": {
+    "0": 1.040372,
+    "1": 1.019502,
+    "2": 1.204807
+   },
+   "knn": 1,
+   "question": 0
+  },
+  "recXsYa3i2UhGF5fe": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.751481,
+   "distances": {
+    "0": 0.483509,
+    "1": 1.23499,
+    "2": 1.472506
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recYCMJWH7IpcdqwE": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.753786,
+   "distances": {
+    "0": 0.579353,
+    "1": 1.333139,
+    "2": 1.397517
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recb80OwMgNnceA9t": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.134289,
+   "distances": {
+    "0": 0.972929,
+    "1": 1.136962,
+    "2": 1.107217
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recixxJmdux0d8LZQ": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.28028,
+   "distances": {
+    "0": 1.187989,
+    "1": 0.887638,
+    "2": 1.167918
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "reckEnrOPFT9Ru7tW": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.588879,
+   "distances": {
+    "0": 0.676583,
+    "1": 1.368549,
+    "2": 1.265462
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recz3MfYHPRhsEQkW": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.231191,
+   "distances": {
+    "0": 0.902414,
+    "1": 1.133605,
+    "2": 1.20018
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec06pnAkLOr2t2mp": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.3559,
+   "distances": {
+    "0": 0.832693,
+    "1": 1.188593,
+    "2": 1.222675
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec5eA17Qr1ucNLUf": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.852705,
+   "distances": {
+    "0": 0.566274,
+    "1": 1.453382,
+    "2": 1.418979
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec7qmSnbud4FHSqL": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.706682,
+   "distances": {
+    "0": 0.596342,
+    "1": 1.303024,
+    "2": 1.434051
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recG1ljJQcVy6CbSl": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.600277,
+   "distances": {
+    "0": 0.693278,
+    "1": 1.293555,
+    "2": 1.364792
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recRTiyaRymerDJ4y": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.912985,
+   "distances": {
+    "0": 0.472797,
+    "1": 1.496909,
+    "2": 1.385782
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recSBcGLPatKb3Ygu": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.640897,
+   "distances": {
+    "0": 0.648222,
+    "1": 1.408889,
+    "2": 1.289119
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recXsuOHRBLcyenF2": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.163843,
+   "distances": {
+    "0": 1.449986,
+    "1": 0.599429,
+    "2": 0.763273
+   },
+   "knn": 1,
+   "question": 0
+  },
+  "recaXdGn3FAIkxLGM": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.914957,
+   "distances": {
+    "0": 0.413535,
+    "1": 1.476657,
+    "2": 1.328492
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recdya6FuYraBU5Rh": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.921018,
+   "distances": {
+    "0": 0.471784,
+    "1": 1.46434,
+    "2": 1.392802
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "reciuppdQde4FGX1z": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.68165,
+   "distances": {
+    "0": 0.614325,
+    "1": 1.295975,
+    "2": 1.352507
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "reckYqR92oJkqJXkE": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.667885,
+   "distances": {
+    "0": 0.613857,
+    "1": 1.360759,
+    "2": 1.281742
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recnjViFrqlZNL3fY": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.602012,
+   "distances": {
+    "0": 0.604754,
+    "1": 1.206766,
+    "2": 1.26455
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recINGR1z01Fh1Z3A": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.888901,
+   "distances": {
+    "0": 0.454609,
+    "1": 1.49405,
+    "2": 1.34351
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recLB0EkQ54bYVhnd": {
+   "group": 0,
+   "second": 1,
+   "margin": 1.148199,
+   "distances": {
+    "0": 0.29608,
+    "1": 1.444279,
+    "2": 1.490579
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recRZjaElf8ft7xTq": {
+   "group": 0,
+   "second": 2,
+   "margin": 1.01312,
+   "distances": {
+    "0": 0.409406,
+    "1": 1.497357,
+    "2": 1.422527
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recUc29lMDBEvurYo": {
+   "group": 0,
+   "second": 2,
+   "margin": 1.031201,
+   "distances": {
+    "0": 0.392293,
+    "1": 1.437891,
+    "2": 1.423494
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recfTlTMjZBuOducT": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.783207,
+   "distances": {
+    "0": 0.577737,
+    "1": 1.410849,
+    "2": 1.360944
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recwlwlcPvXVNPmvl": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.835872,
+   "distances": {
+    "0": 0.497335,
+    "1": 1.407422,
+    "2": 1.333207
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recywRj5a8EEjj2Ib": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.868599,
+   "distances": {
+    "0": 0.534569,
+    "1": 1.403167,
+    "2": 1.414498
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec0wZvZgiz320KRs": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.840251,
+   "distances": {
+    "0": 0.463657,
+    "1": 1.47562,
+    "2": 1.303908
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec1zl5LvaatzGhFt": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.588141,
+   "distances": {
+    "0": 0.71223,
+    "1": 1.328018,
+    "2": 1.30037
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec260hNUCEj109Dj": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.772429,
+   "distances": {
+    "0": 0.546394,
+    "1": 1.492462,
+    "2": 1.318823
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec8y3ZrBOcLgNEkE": {
+   "group": 1,
+   "second": 2,
+   "margin": 0.180981,
+   "distances": {
+    "0": 1.168556,
+    "1": 0.907761,
+    "2": 1.088741
+   },
+   "knn": 1,
+   "question": 0
+  },
+  "recI1ls9OXdxatHQn": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.799512,
+   "distances": {
+    "0": 0.552504,
+    "1": 1.352016,
+    "2": 1.375022
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recIj8lR4tuDgrHou": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.704438,
+   "distances": {
+    "0": 0.597769,
+    "1": 1.302207,
+    "2": 1.360668
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recLrRirj7iXoB0rU": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.714029,
+   "distances": {
+    "0": 0.627181,
+    "1": 1.34121,
+    "2": 1.381922
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recN4DY9Q5V03glmQ": {
+   "group": 0,
+   "second": 1,
+   "margin": 1.155592,
+   "distances": {
+    "0": 0.266389,
+    "1": 1.42198,
+    "2": 1.435574
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recOYsaYs6RmtlTDy": {
+   "group": 0,
+   "second": 1,
+   "margin": 1.08127,
+   "distances": {
+    "0": 0.346413,
+    "1": 1.427683,
+    "2": 1.520167
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recPSTGXK3P39yNYT": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.444371,
+   "distances": {
+    "0": 0.738468,
+    "1": 1.182839,
+    "2": 1.277934
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recPzW1WqRnPs57D6": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.887542,
+   "distances": {
+    "0": 0.505732,
+    "1": 1.402856,
+    "2": 1.393274
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recgI6tUQ7RLJRWGx": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.93299,
+   "distances": {
+    "0": 0.443757,
+    "1": 1.438969,
+    "2": 1.376747
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recgM7o1tcc7tP778": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.035704,
+   "distances": {
+    "0": 0.956105,
+    "1": 0.991809,
+    "2": 1.210701
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rechgQucGlrnt8KRV": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.645963,
+   "distances": {
+    "0": 0.644703,
+    "1": 1.450713,
+    "2": 1.290666
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recmwwQJnx7ll7bqL": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.374051,
+   "distances": {
+    "0": 0.847109,
+    "1": 1.22116,
+    "2": 1.235513
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recrs0kUo7Ua1xhKO": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.228306,
+   "distances": {
+    "0": 0.916396,
+    "1": 1.144703,
+    "2": 1.188449
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recvlnu8BuLmXZhSX": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.687206,
+   "distances": {
+    "0": 0.64773,
+    "1": 1.334935,
+    "2": 1.385763
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recyPffUDqC2k7ZZO": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.89374,
+   "distances": {
+    "0": 0.471729,
+    "1": 1.421149,
+    "2": 1.365468
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec9W28HgpEUeUN8k": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.704797,
+   "distances": {
+    "0": 0.580446,
+    "1": 1.436849,
+    "2": 1.285243
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recBhnXrUyTJ6WHIR": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.398562,
+   "distances": {
+    "0": 0.784755,
+    "1": 1.183317,
+    "2": 1.347534
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recE2ihVfqEK4R9d0": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.724089,
+   "distances": {
+    "0": 0.549563,
+    "1": 1.366833,
+    "2": 1.273652
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recJpyGtGIsxulevT": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.702227,
+   "distances": {
+    "0": 0.581276,
+    "1": 1.4059,
+    "2": 1.283504
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recPIzpnuYpB4yvmp": {
+   "group": 0,
+   "second": 1,
+   "margin": 1.073657,
+   "distances": {
+    "0": 0.376133,
+    "1": 1.44979,
+    "2": 1.473517
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recRhwQwHijW0gCLo": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.5942,
+   "distances": {
+    "0": 0.692519,
+    "1": 1.286719,
+    "2": 1.356486
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recatj4YXzbOaq3Ar": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.760721,
+   "distances": {
+    "0": 0.55826,
+    "1": 1.318981,
+    "2": 1.325862
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recIIUynGGpsGEYuo": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.759355,
+   "distances": {
+    "0": 0.559496,
+    "1": 1.417498,
+    "2": 1.318851
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recNu3MXkvWUzHZr9": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.281195,
+   "distances": {
+    "0": 0.832301,
+    "1": 1.147829,
+    "2": 1.113496
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recS48OsU6kVadBPW": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.909578,
+   "distances": {
+    "0": 0.490966,
+    "1": 1.437989,
+    "2": 1.400544
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recmI7EiLv72PxmYK": {
+   "group": 0,
+   "second": 2,
+   "margin": 0.762214,
+   "distances": {
+    "0": 0.539143,
+    "1": 1.445851,
+    "2": 1.301357
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "recmkvk6EFAmqyMxR": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.8089,
+   "distances": {
+    "0": 0.552441,
+    "1": 1.361341,
+    "2": 1.380339
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "reczzzihL7btBH7RO": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.363142,
+   "distances": {
+    "0": 0.671499,
+    "1": 1.034641,
+    "2": 1.468842
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "rec0VuKUjt1SZ7NYv": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.759106,
+   "distances": {
+    "0": 0.582963,
+    "1": 1.34207,
+    "2": 1.379847
+   },
+   "knn": 0,
+   "question": 0
+  }
+ }
+}

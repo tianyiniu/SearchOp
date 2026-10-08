@@ -1,0 +1,132 @@
+[
+ {
+  "name": "llm_g0_independent_balance_check",
+  "group": 0,
+  "strategy": "A high-effort solver works through the balance and units, a blind expert checks the setup independently, and a high-effort critic investigates disagreements over signs or scale.",
+  "program": {
+   "plan": [
+    {
+     "personas": [
+      "solver"
+     ],
+     "effort": "high"
+    },
+    {
+     "personas": [
+      "expert"
+     ],
+     "sees": "none"
+    }
+   ],
+   "rules": [
+    {
+     "when": [
+      "plan_left"
+     ],
+     "do": "continue"
+    },
+    {
+     "when": [
+      "step==2",
+      "n_distinct>=2"
+     ],
+     "do": "critic|high"
+    }
+   ],
+   "default": "stop:last_commit"
+  },
+  "usage": {
+   "input": 9253,
+   "output": 1303
+  }
+ },
+ {
+  "name": "llm_g1_category_disagreement_expert",
+  "group": 1,
+  "strategy": "An expert and solver independently test the category descriptions; only disagreement triggers a high-effort expert review of definitions, qualifiers, and negations.",
+  "program": {
+   "plan": [
+    {
+     "personas": [
+      "expert",
+      "solver"
+     ]
+    }
+   ],
+   "rules": [
+    {
+     "when": [
+      "plan_left"
+     ],
+     "do": "continue"
+    },
+    {
+     "when": [
+      "step==1",
+      "n_distinct>=2"
+     ],
+     "do": "expert|high"
+    },
+    {
+     "when": [
+      "step==2"
+     ],
+     "do": "stop:last_commit"
+    }
+   ],
+   "default": "stop:vote"
+  },
+  "usage": {
+   "input": 9253,
+   "output": 1303
+  }
+ },
+ {
+  "name": "llm_g2_blind_attribution_tiebreak",
+  "group": 2,
+  "strategy": "Three independent solvers handle straightforward recall, while a nonunanimous result prompts a blind expert attribution followed by a verifier's exact-name check.",
+  "program": {
+   "plan": [
+    {
+     "personas": [
+      "solver",
+      "solver",
+      "solver"
+     ]
+    }
+   ],
+   "rules": [
+    {
+     "when": [
+      "plan_left"
+     ],
+     "do": "continue"
+    },
+    {
+     "when": [
+      "step==1",
+      "r1_majority<3"
+     ],
+     "do": "expert|blind"
+    },
+    {
+     "when": [
+      "step==2"
+     ],
+     "do": "verifier"
+    },
+    {
+     "when": [
+      "step==3"
+     ],
+     "do": "stop:last_commit"
+    }
+   ],
+   "default": "stop:vote"
+  },
+  "usage": {
+   "input": 9253,
+   "output": 1303
+  }
+ }
+]

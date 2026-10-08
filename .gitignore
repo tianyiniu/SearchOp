@@ -20,13 +20,43 @@ baselines/results/
 baselines/logs/
 tests/data/
 
-# data and outputs: only what the Qwen 9B MATH run needs (the question files, the groups and
+# data and outputs: only what the runs need: the Qwen 9B MATH run (the question files, the groups and
 # routes made by run_describe_math.sh, and the seeds and dev split written by its step 3 here,
-# since both use the API)
+# since both use the API) and the Qwen 4B runs (qwen4b_experiments.md: SuperGPQA questions, groups,
+# routes and seeds; HLE groups, routes and seeds; GPQA-Diamond routes). This repo is public, and HLE
+# and GPQA ask that their questions stay out of training data: no file with their question text,
+# answers or graded replies is pushed. Those travel in qwen4b_hle_gpqa_data.tar.gz, sent separately.
 datasets/*
 !datasets/math_l5_300_train.json
 !datasets/math_l5_test.json
+!datasets/supergpqa_600_train.json
+!datasets/supergpqa_2k_test.json
+*.tar.gz
 outputs/*
+!outputs/describe_v3/
+outputs/describe_v3/*
+!outputs/describe_v3/clusters_600_train.json
+!outputs/describe_v3/clusters_600_train.md
+!outputs/describe_v3/routes_2k_test.json
+!outputs/describe_v3/routes_gpqa_diamond_test.json
+!outputs/describe_hle_v4/
+outputs/describe_hle_v4/*
+!outputs/describe_hle_v4/clusters_train.json
+!outputs/describe_hle_v4/routes_test.json
+!outputs/pipeline_cluster_qwen9b/
+outputs/pipeline_cluster_qwen9b/*
+!outputs/pipeline_cluster_qwen9b/run2/
+outputs/pipeline_cluster_qwen9b/run2/*
+!outputs/pipeline_cluster_qwen9b/run2/seeds.json
+!outputs/pipeline_cluster_qwen9b/run2/seeds.md
+!outputs/pipeline_cluster_qwen9b/run2/seeds.llm.json
+!outputs/pipeline_cluster_hle_qwen9b/
+outputs/pipeline_cluster_hle_qwen9b/*
+!outputs/pipeline_cluster_hle_qwen9b/run1/
+outputs/pipeline_cluster_hle_qwen9b/run1/*
+!outputs/pipeline_cluster_hle_qwen9b/run1/seeds.json
+!outputs/pipeline_cluster_hle_qwen9b/run1/seeds.md
+!outputs/pipeline_cluster_hle_qwen9b/run1/seeds.llm.json
 !outputs/describe_math_v1/
 outputs/describe_math_v1/*
 !outputs/describe_math_v1/clusters_train.json

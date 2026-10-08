@@ -1,0 +1,192 @@
+[
+ {
+  "name": "llm_g0_bound_and_scope_check",
+  "group": 0,
+  "strategy": "Two independent high-effort derivations test the lower bound and construction; a verifier checks the universal condition when they agree, while disagreement triggers a fresh derivation.",
+  "program": {
+   "plan": [
+    {
+     "personas": [
+      "solver",
+      "solver"
+     ],
+     "effort": "high"
+    }
+   ],
+   "rules": [
+    {
+     "when": [
+      "plan_left"
+     ],
+     "do": "continue"
+    },
+    {
+     "when": [
+      "step==1",
+      "r1_majority==2"
+     ],
+     "do": "verifier|high"
+    },
+    {
+     "when": [
+      "step==1",
+      "n_distinct>=2"
+     ],
+     "do": "expert_solver|high|blind"
+    },
+    {
+     "when": [
+      "last_round:expert+solver"
+     ],
+     "do": "synthesizer"
+    }
+   ],
+   "default": "stop:last_commit"
+  },
+  "usage": {
+   "input": 15279,
+   "output": 1850
+  }
+ },
+ {
+  "name": "llm_g1_invariant_count_audit",
+  "group": 1,
+  "strategy": "An expert and solver independently select and calculate the invariant, then a verifier checks multiplicities and reporting conventions; only a conflicting result needs synthesis.",
+  "program": {
+   "plan": [
+    {
+     "personas": [
+      "expert",
+      "solver"
+     ]
+    },
+    {
+     "personas": [
+      "verifier"
+     ]
+    }
+   ],
+   "rules": [
+    {
+     "when": [
+      "plan_left"
+     ],
+     "do": "continue"
+    },
+    {
+     "when": [
+      "step==2",
+      "n_distinct>=2"
+     ],
+     "do": "synthesizer|high"
+    }
+   ],
+   "default": "stop:last_commit"
+  },
+  "usage": {
+   "input": 15279,
+   "output": 1850
+  }
+ },
+ {
+  "name": "llm_g2_independent_view_transforms",
+  "group": 2,
+  "strategy": "Three independent readings reduce symbol misreads; unanimity gets a direction-and-shading check, while disagreement prompts a fresh high-effort transformation and synthesis.",
+  "program": {
+   "plan": [
+    {
+     "personas": [
+      "solver",
+      "solver",
+      "solver"
+     ]
+    }
+   ],
+   "rules": [
+    {
+     "when": [
+      "plan_left"
+     ],
+     "do": "continue"
+    },
+    {
+     "when": [
+      "step==1",
+      "r1_majority==3"
+     ],
+     "do": "verifier"
+    },
+    {
+     "when": [
+      "step==1"
+     ],
+     "do": "expert|high|blind"
+    },
+    {
+     "when": [
+      "last_round:expert"
+     ],
+     "do": "synthesizer"
+    }
+   ],
+   "default": "stop:last_commit"
+  },
+  "usage": {
+   "input": 15279,
+   "output": 1850
+  }
+ },
+ {
+  "name": "llm_g3_blind_evidence_crosscheck",
+  "group": 3,
+  "strategy": "An expert recalls the relevant evidence and a blind solver independently compares complete candidates; conflicting choices receive a deeper expert assessment.",
+  "program": {
+   "plan": [
+    {
+     "personas": [
+      "expert"
+     ]
+    },
+    {
+     "personas": [
+      "solver"
+     ],
+     "sees": "none"
+    }
+   ],
+   "rules": [
+    {
+     "when": [
+      "plan_left"
+     ],
+     "do": "continue"
+    },
+    {
+     "when": [
+      "step==2",
+      "n_distinct>=2"
+     ],
+     "do": "expert|high|blind"
+    },
+    {
+     "when": [
+      "last_round:expert",
+      "step==3"
+     ],
+     "do": "synthesizer"
+    },
+    {
+     "when": [
+      "last_round:synthesizer"
+     ],
+     "do": "stop:last_commit"
+    }
+   ],
+   "default": "stop:vote"
+  },
+  "usage": {
+   "input": 15279,
+   "output": 1850
+  }
+ }
+]

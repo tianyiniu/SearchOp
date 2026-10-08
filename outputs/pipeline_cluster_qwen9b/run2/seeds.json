@@ -1,0 +1,576 @@
+{
+ "settings": {
+  "executor": "v3",
+  "digest": [
+   2000,
+   2000
+  ],
+  "summary_words": 500,
+  "window": 32768,
+  "high_cost": 3,
+  "eliminator": false,
+  "prompts": "032e5eb669",
+  "turn_cap": 15,
+  "total_cap": 21,
+  "last_round_vote": true,
+  "plain_instruction": true,
+  "count_read_summaries": true,
+  "model": "Qwen/Qwen3.5-9B"
+ },
+ "clusters": "/nas-ssd2/tianyin4/SearchOp/outputs/describe_v3/clusters_600_train.json",
+ "per_group": 0,
+ "seed": 0,
+ "k": 3,
+ "guide_model": "gpt-6-sol",
+ "seeds": [
+  {
+   "name": "mad",
+   "source": "protocol",
+   "program": {
+    "plan": [
+     {
+      "personas": [
+       "solver",
+       "solver",
+       "solver"
+      ]
+     },
+     {
+      "personas": [
+       "solver",
+       "solver",
+       "solver"
+      ]
+     },
+     {
+      "personas": [
+       "solver",
+       "solver",
+       "solver"
+      ]
+     }
+    ],
+    "rules": [
+     {
+      "when": [
+       "plan_left"
+      ],
+      "do": "continue"
+     }
+    ],
+    "default": "stop:vote"
+   },
+   "summary": {
+    "plan": [
+     "solver_x3",
+     "solver_x3",
+     "solver_x3"
+    ],
+    "n_rules": 1,
+    "moves": [],
+    "stop_reads": [
+     "vote"
+    ]
+   }
+  },
+  {
+   "name": "early_exit_agree",
+   "source": "protocol",
+   "program": {
+    "plan": [
+     {
+      "personas": [
+       "solver",
+       "solver",
+       "solver",
+       "solver"
+      ]
+     }
+    ],
+    "rules": [
+     {
+      "when": [
+       "plan_left"
+      ],
+      "do": "continue"
+     },
+     {
+      "when": [
+       "step==1",
+       "r1_majority>=3"
+      ],
+      "do": "stop:vote"
+     },
+     {
+      "when": [
+       "step==1"
+      ],
+      "do": "critic"
+     },
+     {
+      "when": [
+       "step==2"
+      ],
+      "do": "critic"
+     }
+    ],
+    "default": "stop:vote"
+   },
+   "summary": {
+    "plan": [
+     "solver_x4"
+    ],
+    "n_rules": 4,
+    "moves": [
+     "critic"
+    ],
+    "stop_reads": [
+     "vote"
+    ]
+   }
+  },
+  {
+   "name": "expert_first",
+   "source": "protocol",
+   "program": {
+    "plan": [
+     {
+      "personas": [
+       "expert"
+      ]
+     }
+    ],
+    "rules": [
+     {
+      "when": [
+       "plan_left"
+      ],
+      "do": "continue"
+     },
+     {
+      "when": [
+       "step==1"
+      ],
+      "do": "expert_solver"
+     },
+     {
+      "when": [
+       "step==2",
+       "last_round_agree"
+      ],
+      "do": "stop:last_commit"
+     },
+     {
+      "when": [
+       "step==2"
+      ],
+      "do": "verifier"
+     }
+    ],
+    "default": "stop:last_commit"
+   },
+   "summary": {
+    "plan": [
+     "expert"
+    ],
+    "n_rules": 4,
+    "moves": [
+     "expert_solver",
+     "verifier"
+    ],
+    "stop_reads": [
+     "last_commit"
+    ]
+   }
+  },
+  {
+   "name": "direct_high",
+   "source": "protocol",
+   "program": {
+    "plan": [
+     {
+      "personas": [
+       "solver"
+      ],
+      "effort": "high"
+     }
+    ],
+    "rules": [
+     {
+      "when": [
+       "plan_left"
+      ],
+      "do": "continue"
+     }
+    ],
+    "default": "stop:last_commit"
+   },
+   "summary": {
+    "plan": [
+     "solver|high"
+    ],
+    "n_rules": 1,
+    "moves": [],
+    "stop_reads": [
+     "last_commit"
+    ]
+   }
+  },
+  {
+   "name": "self_refine_high",
+   "source": "protocol",
+   "program": {
+    "plan": [
+     {
+      "personas": [
+       "solver"
+      ],
+      "effort": "high"
+     },
+     {
+      "personas": [
+       "critic"
+      ],
+      "effort": "high"
+     },
+     {
+      "personas": [
+       "solver"
+      ],
+      "effort": "high"
+     },
+     {
+      "personas": [
+       "critic"
+      ],
+      "effort": "high"
+     },
+     {
+      "personas": [
+       "solver"
+      ],
+      "effort": "high"
+     }
+    ],
+    "rules": [
+     {
+      "when": [
+       "last_round:critic",
+       "kept_answer"
+      ],
+      "do": "stop:last_commit"
+     },
+     {
+      "when": [
+       "plan_left"
+      ],
+      "do": "continue"
+     }
+    ],
+    "default": "stop:last_commit"
+   },
+   "summary": {
+    "plan": [
+     "solver|high",
+     "critic|high",
+     "solver|high",
+     "critic|high",
+     "solver|high"
+    ],
+    "n_rules": 2,
+    "moves": [],
+    "stop_reads": [
+     "last_commit"
+    ]
+   }
+  },
+  {
+   "name": "self_consistency_high",
+   "source": "protocol",
+   "program": {
+    "plan": [
+     {
+      "personas": [
+       "solver",
+       "solver",
+       "solver"
+      ],
+      "effort": "high"
+     }
+    ],
+    "rules": [
+     {
+      "when": [
+       "plan_left"
+      ],
+      "do": "continue"
+     }
+    ],
+    "default": "stop:vote"
+   },
+   "summary": {
+    "plan": [
+     "solver_x3|high"
+    ],
+    "n_rules": 1,
+    "moves": [],
+    "stop_reads": [
+     "vote"
+    ]
+   }
+  },
+  {
+   "name": "verify_then_decide_high",
+   "source": "protocol",
+   "program": {
+    "plan": [
+     {
+      "personas": [
+       "solver",
+       "solver",
+       "solver",
+       "solver"
+      ]
+     }
+    ],
+    "rules": [
+     {
+      "when": [
+       "plan_left"
+      ],
+      "do": "continue"
+     },
+     {
+      "when": [
+       "step==1"
+      ],
+      "do": "verifier|high"
+     }
+    ],
+    "default": "stop:last_commit"
+   },
+   "summary": {
+    "plan": [
+     "solver_x4"
+    ],
+    "n_rules": 2,
+    "moves": [
+     "verifier|high"
+    ],
+    "stop_reads": [
+     "last_commit"
+    ]
+   }
+  },
+  {
+   "name": "fresh_on_disagree_high",
+   "source": "protocol",
+   "program": {
+    "plan": [
+     {
+      "personas": [
+       "solver",
+       "solver"
+      ]
+     }
+    ],
+    "rules": [
+     {
+      "when": [
+       "plan_left"
+      ],
+      "do": "continue"
+     },
+     {
+      "when": [
+       "step==1",
+       "n_distinct>=2"
+      ],
+      "do": "solver|high|blind"
+     },
+     {
+      "when": [
+       "step==2"
+      ],
+      "do": "stop:last_commit"
+     }
+    ],
+    "default": "stop:vote"
+   },
+   "summary": {
+    "plan": [
+     "solver_x2"
+    ],
+    "n_rules": 3,
+    "moves": [
+     "solver|high|blind"
+    ],
+    "stop_reads": [
+     "last_commit",
+     "vote"
+    ]
+   }
+  },
+  {
+   "name": "llm_g0_independent_balance_check",
+   "source": "llm",
+   "group": 0,
+   "program": {
+    "plan": [
+     {
+      "personas": [
+       "solver"
+      ],
+      "effort": "high"
+     },
+     {
+      "personas": [
+       "expert"
+      ],
+      "sees": "none"
+     }
+    ],
+    "rules": [
+     {
+      "when": [
+       "plan_left"
+      ],
+      "do": "continue"
+     },
+     {
+      "when": [
+       "step==2",
+       "n_distinct>=2"
+      ],
+      "do": "critic|high"
+     }
+    ],
+    "default": "stop:last_commit"
+   },
+   "strategy": "A high-effort solver works through the balance and units, a blind expert checks the setup independently, and a high-effort critic investigates disagreements over signs or scale.",
+   "summary": {
+    "plan": [
+     "solver|high",
+     "expert|blind"
+    ],
+    "n_rules": 2,
+    "moves": [
+     "critic|high"
+    ],
+    "stop_reads": [
+     "last_commit"
+    ]
+   }
+  },
+  {
+   "name": "llm_g1_category_disagreement_expert",
+   "source": "llm",
+   "group": 1,
+   "program": {
+    "plan": [
+     {
+      "personas": [
+       "expert",
+       "solver"
+      ]
+     }
+    ],
+    "rules": [
+     {
+      "when": [
+       "plan_left"
+      ],
+      "do": "continue"
+     },
+     {
+      "when": [
+       "step==1",
+       "n_distinct>=2"
+      ],
+      "do": "expert|high"
+     },
+     {
+      "when": [
+       "step==2"
+      ],
+      "do": "stop:last_commit"
+     }
+    ],
+    "default": "stop:vote"
+   },
+   "strategy": "An expert and solver independently test the category descriptions; only disagreement triggers a high-effort expert review of definitions, qualifiers, and negations.",
+   "summary": {
+    "plan": [
+     "expert_solver"
+    ],
+    "n_rules": 3,
+    "moves": [
+     "expert|high"
+    ],
+    "stop_reads": [
+     "last_commit",
+     "vote"
+    ]
+   }
+  },
+  {
+   "name": "llm_g2_blind_attribution_tiebreak",
+   "source": "llm",
+   "group": 2,
+   "program": {
+    "plan": [
+     {
+      "personas": [
+       "solver",
+       "solver",
+       "solver"
+      ]
+     }
+    ],
+    "rules": [
+     {
+      "when": [
+       "plan_left"
+      ],
+      "do": "continue"
+     },
+     {
+      "when": [
+       "step==1",
+       "r1_majority<3"
+      ],
+      "do": "expert|blind"
+     },
+     {
+      "when": [
+       "step==2"
+      ],
+      "do": "verifier"
+     },
+     {
+      "when": [
+       "step==3"
+      ],
+      "do": "stop:last_commit"
+     }
+    ],
+    "default": "stop:vote"
+   },
+   "strategy": "Three independent solvers handle straightforward recall, while a nonunanimous result prompts a blind expert attribution followed by a verifier's exact-name check.",
+   "summary": {
+    "plan": [
+     "solver_x3"
+    ],
+    "n_rules": 4,
+    "moves": [
+     "expert|blind",
+     "verifier"
+    ],
+    "stop_reads": [
+     "last_commit",
+     "vote"
+    ]
+   }
+  }
+ ]
+}

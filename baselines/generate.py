@@ -14,6 +14,11 @@ Prompt follows the official SuperGPQA zero-shot template; an HLE row (one with a
 GPQA-Diamond or MATH row its dataset's prompt (tasks.py).
 Every finished sample is appended to --out immediately, so an interrupted run resumes
 where it stopped.
+
+A prompt that leaves no room for a reply in the window (under MIN_ROOM tokens; request_one) gives a
+sample with no answer (content None, finish_reason "no_room"), scored as wrong, rather than an error
+that leaves the question without a result (2026-10-08); recover.py, selfrefine.py and mad.py treat a
+turn with no room the same way.
 """
 import argparse
 import asyncio
@@ -67,33 +72,48 @@ def model_settings(args) -> dict:
 
 
 CONTEXT_MARGIN = 64        # tokens kept free when max_tokens is cut to fit the window
-MIN_ROOM = 1024            # below this, a request that does not fit is an error, not a short reply
+MIN_ROOM = 1024            # below this, a request that does not fit gets no reply, not a short one
+NO_ROOM = "no room"        # the start of request_one's error for such a request
+NO_REPLY = {"choices": [{"message": {"content": None}, "finish_reason": "no_room"}],
+            "usage": {"completion_tokens": 0}}
+
+
+def no_room(err: str | None) -> bool:
+    """request_one's error for a prompt that leaves under MIN_ROOM tokens of the window for a reply
+    (counted by the server): it is final, unlike a failed request, so the caller gives no reply."""
+    return err is not None and err.startswith(NO_ROOM)
 
 
 async def fit_to_window(session, url, payload):
     """For a request the server rejected as too long for its window: max_tokens cut to the room the
     prompt leaves (the prompt counted exactly by the server's /tokenize, with the same chat
-    template settings), or None if that room is under MIN_ROOM tokens or cannot be found. vLLM's
+    template settings), 0 if that room is under MIN_ROOM tokens, or None if it cannot be counted. vLLM's
     rejection gives only a lower bound on the prompt's length, hence the count."""
     body = {"model": payload["model"], "messages": payload["messages"]}
     if "chat_template_kwargs" in payload:
         body["chat_template_kwargs"] = payload["chat_template_kwargs"]
     try:
-        async with session.post(url.replace("/v1/chat/completions", "/tokenize"), json=body) as resp:
+        # on a new session: vLLM 0.18 closes the connection after the rejection without saying so,
+        # and a /tokenize sent on the caller's session right after it fails (ServerDisconnectedError)
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300)) as own, \
+                own.post(url.replace("/v1/chat/completions", "/tokenize"), json=body) as resp:
             got = await resp.json(content_type=None)
             if resp.status != 200:
                 return None
     except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError):
         return None
     room = got["max_model_len"] - got["count"] - CONTEXT_MARGIN
-    return room if MIN_ROOM <= room < payload["max_tokens"] else None
+    if room < MIN_ROOM:
+        return 0
+    return room if room < payload["max_tokens"] else None
 
 
 async def request_one(session, url, payload, max_retries):
     """POST with retries. A request the server rejects as too long for its window (HTTP 400,
     'maximum context length') is sent again at once with max_tokens cut to fit (fit_to_window);
     the reply then carries "max_tokens_cut": the limit it was sent with. Requests that fit are
-    sent exactly as given."""
+    sent exactly as given. One whose prompt leaves under MIN_ROOM tokens returns at once with an
+    error that starts with NO_ROOM (no_room)."""
     cut = None
     for attempt in range(max_retries):
         try:
@@ -105,7 +125,10 @@ async def request_one(session, url, payload, max_retries):
                     return data, None
                 err = f"HTTP {resp.status}: {str(data)[:300]}"
                 if resp.status == 400 and cut is None and "maximum context length" in str(data):
-                    if (room := await fit_to_window(session, url, payload)) is not None:
+                    room = await fit_to_window(session, url, payload)
+                    if room == 0:                    # counted: no room for a reply, a retry cannot help
+                        return None, f"{NO_ROOM}: {err}"
+                    if room is not None:
                         payload, cut = {**payload, "max_tokens": room}, room
                         continue
         except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError) as e:
@@ -148,7 +171,7 @@ async def main(args):
     sem = asyncio.Semaphore(args.concurrency)
     lock = asyncio.Lock()
     pbar = tqdm(total=len(jobs), smoothing=0.05, dynamic_ncols=True)
-    stats = {"tokens": 0, "errors": 0, "truncated": 0, "t0": time.time()}
+    stats = {"tokens": 0, "errors": 0, "truncated": 0, "no_room": 0, "t0": time.time()}
     out_f = open(args.out, "a")
 
     # Non-streaming: nothing arrives until the whole response is generated, so a read timeout
@@ -170,6 +193,8 @@ async def main(args):
                 }
                 url = endpoints[job_idx % len(endpoints)]
                 data, err = await request_one(session, url, payload, args.max_retries)
+            if no_room(err):                           # no room for any reply: a sample with no answer
+                data, err = NO_REPLY, None
 
             rec = {"id": item["id"], "sample_idx": s, "error": err}
             if data is not None:
@@ -185,6 +210,7 @@ async def main(args):
                     rec["max_tokens_cut"] = data["max_tokens_cut"]
                 stats["tokens"] += rec["completion_tokens"]
                 stats["truncated"] += rec["finish_reason"] == "length"
+                stats["no_room"] += rec["finish_reason"] == "no_room"
             else:
                 stats["errors"] += 1
 
@@ -202,7 +228,7 @@ async def main(args):
     out_f.close()
     el = time.time() - stats["t0"]
     print(f"finished {len(jobs)} samples in {el / 3600:.2f}h, {stats['tokens'] / el:.0f} tok/s, "
-          f"truncated={stats['truncated']}, errors={stats['errors']}")
+          f"truncated={stats['truncated']}, no room={stats['no_room']}, errors={stats['errors']}")
 
 
 if __name__ == "__main__":

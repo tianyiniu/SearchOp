@@ -1,7 +1,7 @@
 # Shared setup of the cluster pipeline (sourced, never run on its own): the model family and dataset
 # from the arguments, every path and option, the server check, and steps 1 and 2 (the external
-# baselines on the test split and on the search questions, unless EXTERNAL_BASELINES=0 (HLE and MATH:
-# then only on the comparison's questions), and the dev split). Both
+# baselines on the test split and on the search questions, unless EXTERNAL_BASELINES=0 (HLE, MATH and
+# qwen4b SuperGPQA: then only on the comparison's questions), and the dev split). Both
 # run_compare_external_cluster.sh and run_pipeline_cluster.sh source it, so they always share the settings.
 # The first argument is the model family (gptoss, qwen, qwen9b or qwen4b), the second the dataset
 # (supergpqa, hle or math).
@@ -66,6 +66,10 @@ esac
 case "$DATASET" in
     supergpqa)
         TRAIN="${TRAIN:-datasets/supergpqa_600_train.json}"
+        if [[ "$FAMILY" == qwen4b ]]; then           # qwen4b (2026-10-08): the 1,000-question test split, which
+            TEST="${TEST:-datasets/supergpqa_2k_test.json}"          # holds the 300 below; same groups
+            ROUTES="${ROUTES:-outputs/describe_v3/routes_2k_test.json}"
+        fi
         TEST="${TEST:-datasets/supergpqa_600_test.json}"
         CLUSTERS="${CLUSTERS:-outputs/describe_v3/clusters_600_train.json}"
         ROUTES="${ROUTES:-outputs/describe_v3/routes_600_test.json}"
@@ -82,7 +86,15 @@ case "$DATASET" in
         BNAME_TRAIN="${BTAG}_$(basename "$CLUSTERS" .json)_search_$QTAG"                  # ..._clusters_600_train_search_all
         REUSE_TRAIN_FROM="${BTAG}_$(basename "$CLUSTERS" .json)_search_cap50"           # run2's 150 search questions
         # qwen9b run2: its 200 search questions are among the 300 that qwen9b run1 ran them on
-        if (( REUSE_TRAIN_ALL )); then REUSE_TRAIN_FROM="${BTAG}_$(basename "$CLUSTERS" .json)_search_all"; fi ;;
+        if (( REUSE_TRAIN_ALL )); then REUSE_TRAIN_FROM="${BTAG}_$(basename "$CLUSTERS" .json)_search_all"; fi
+        if [[ "$FAMILY" == qwen4b ]]; then
+            # as on HLE and MATH (2026-10-08): the external baselines are run separately, so none on the
+            # test split or the search questions; the comparison runs on the first 34 search questions of
+            # each of the 3 groups (102), one external run against one of ours, with the external
+            # Self-Refine as run_baselines.py runs it on every dataset
+            COMPARE_EXTERNAL=1; EXTERNAL_BASELINES=0; COMPARE_PER_GROUP=34; COMPARE_RUNS=1
+            SR_ARGS=(--max-tokens 28672 --feedback-max-tokens 24576 --recover --recover-feedback)
+        fi ;;
     hle)                                             # HLE (2026-10-07): the design of SuperGPQA qwen9b run2 / gptoss run4
         TRAIN="${TRAIN:-datasets/hle_text_train_800.json}"
         TEST="${TEST:-datasets/hle_text_test_200.json}"

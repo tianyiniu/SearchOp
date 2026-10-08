@@ -23,6 +23,11 @@ Changes, for these models and datasets:
   - --recover (off by default): a reply cut off at its token limit with no answer is asked once
     for the answer its reasoning supports (recover.py), and that reply is what the other agents see.
   - --k runs the whole debate k independent times per question (sample indices 0..k-1).
+  - A turn whose conversation leaves no room for a reply in the window (generate.no_room) keeps the
+    agent's reply of the round before (in round 1: no reply, which does not vote), so the debate
+    goes on and the question gets a result (2026-10-08; before, the run was an error and stayed
+    missing); such a turn has finish_reason "no_room". A recovery with no room leaves the reply as
+    it was cut off (recover.py).
 
 Output: one line per (question, run): "finals" (the agents' last replies), the run's total
 completion tokens (every turn, recovery included), and every turn under "mad" (without the thinking
@@ -39,11 +44,17 @@ import aiohttp
 from tqdm import tqdm
 
 import tasks
-from generate import request_one, sample_seed
+from generate import no_room, request_one, sample_seed
 from recover import add_request_args, needs_recovery, recover, with_recovery
 from selfrefine import load_done, model_settings
 
 SEED_OFFSET = 7_000_000        # far from the direct samples' (index < 1000), Self-Refine's and recovery's
+
+
+def kept_reply(last: dict | None) -> dict:
+    """The turn of an agent whose conversation left no room for a reply: its reply of the round
+    before again (none in round 1), with no tokens of its own."""
+    return {"content": last["content"] if last else None, "finish_reason": "no_room", "completion_tokens": 0}
 
 
 async def main(args):
@@ -71,7 +82,7 @@ async def main(args):
     runs_at_once = asyncio.Semaphore(max(1, args.concurrency // args.agents))
     lock = asyncio.Lock()
     pbar = tqdm(total=len(todo), smoothing=0.05, dynamic_ncols=True)
-    stats = {"tokens": 0, "errors": 0, "recovered": 0, "unanimous": 0, "t0": time.time()}
+    stats = {"tokens": 0, "errors": 0, "recovered": 0, "unanimous": 0, "no_room": 0, "t0": time.time()}
     out_f = open(args.out, "a")
 
     timeout = aiohttp.ClientTimeout(total=None, sock_connect=30)
@@ -115,6 +126,9 @@ async def main(args):
                     limit = args.max_tokens if t == 0 else args.debate_max_tokens
                     got = await asyncio.gather(*(turn(url, ctx, (base + 10 * t + i) % (2**31), limit, item)
                                                  for i, ctx in enumerate(contexts)))
+                    stats["no_room"] += sum(no_room(e) for _, e in got)
+                    got = [(kept_reply(rounds[-1][i] if rounds else None), None) if no_room(e) else (g, e)
+                           for i, (g, e) in enumerate(got)]
                     err = next((e for _, e in got if e), None)
                     if err:
                         break
@@ -159,7 +173,7 @@ async def main(args):
     el = time.time() - stats["t0"]
     print(f"finished {len(todo)} debates in {el / 3600:.2f}h, {stats['tokens'] / el:.0f} tok/s, "
           f"agents agree at the end in {stats['unanimous']}, recovered turns {stats['recovered']}, "
-          f"errors {stats['errors']}")
+          f"turns with no room {stats['no_room']}, errors {stats['errors']}")
 
 
 if __name__ == "__main__":
