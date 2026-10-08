@@ -1,5 +1,5 @@
 {
- "clusters": "/nas-ssd2/tianyin4/SearchOp/outputs/describe_math_v1/clusters_train.json",
+ "clusters": "outputs/describe_math_v1/clusters_train.json",
  "rep": "description",
  "mh_weight": 0.5,
  "mh_max_mean": 0.9,
