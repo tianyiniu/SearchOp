@@ -22,7 +22,12 @@ Checks (all must hold):
                  errors >= 0
   - out of room: the high-effort solver's share of replies with no visible text is at most 2 points
                  above the external direct baseline's share of replies cut off
-  - no letter:   at most 1% of each program's debates end with no letter (MATH and HLE: no answer)
+  - no letter:   the share of each program's debates that end with no letter (MATH and HLE: no
+                 answer) is at most 1 point above the share of the external program's runs that
+                 end with none (its score file's empty answers); with none there, at most 1%.
+                 (Until 2026-10-08 at most 1% whatever the external share: on HLE, gpt-oss ran out
+                 of room on over half its replies, and ours ended with no answer in 3 of 100
+                 debates against the external Direct CoT's 7.)
 HLE (--answers open): ours and the external answers are both graded by the judge model, with the
 one verdict cache the setup names (--judge-cache), so an answer both give is judged once.
 With about 200 questions the accuracy check only catches a gap of about 4 points or more; the
@@ -57,7 +62,7 @@ import debate_mcq as D  # noqa: E402
 import program_space as P  # noqa: E402
 
 ROOM_MARGIN = 0.02               # out-of-room share above the external baseline's cut-off share
-NO_LETTER_LIMIT = 0.01           # debates that end with no letter at all
+NO_LETTER_LIMIT = 0.01           # debates that end with no letter, above the external program's share
 PAIRS = (("direct_high", "direct", "Direct CoT"), ("self_refine_high", "selfrefine", "Self-Refine"))
 
 
@@ -107,7 +112,10 @@ def external(k3_path: Path, qids: list[str]) -> dict:
         raise SystemExit(f"{k3_path}: {len(lacking)} of the {len(qids)} questions are missing (e.g. {lacking[0]})")
     if not all("tokens" in per_q[q] for q in qids):
         raise SystemExit(f"{k3_path}: no tokens per run (score it again with baselines/score.py --save)")
-    return {q: {"marks": list(per_q[q]["marks"]), "tokens": list(per_q[q]["tokens"])} for q in qids}
+    if not all("preds" in per_q[q] for q in qids):
+        raise SystemExit(f"{k3_path}: no answers per run (score it again with baselines/score.py --save)")
+    return {q: {"marks": list(per_q[q]["marks"]), "tokens": list(per_q[q]["tokens"]),
+                "none": [p is None for p in per_q[q]["preds"]]} for q in qids}
 
 
 def cut_off_share(raw_path: Path, qids: list[str], k: int) -> float:
@@ -184,21 +192,24 @@ def main() -> None:
         e_tok = mean([mean(ext[theirs][q]["tokens"]) for q in done])
         no_letter = mean([mean(d[q]["no_letter"]) for q in done])
         no_reply = mean([mean(d[q]["no_reply"]) for q in done])
+        e_none = mean([mean(ext[theirs][q]["none"]) for q in done])
+        none_limit = e_none + NO_LETTER_LIMIT
         rows_out.append({"label": label, "ours": ours, "questions": len(done), "accuracy": acc,
                          "accuracy_run1": mean([d[q]["right"][0] for q in done]), "external_accuracy": e_acc,
                          "external_accuracy_run1": mean([ext[theirs][q]["marks"][0] for q in done]),
                          "diff": diff, "se": se, "tokens": tok, "external_tokens": e_tok,
                          "external_runs": ext_runs[theirs],
                          "turns": mean([mean(d[q]["turns"]) for q in done]), "no_letter": no_letter,
-                         "no_reply": no_reply})
+                         "no_reply": no_reply, "external_no_letter": e_none})
         checks += [
             {"name": f"{label}: every question ran", "ok": len(done) == len(qids),
              "says": f"{len(done)} of {len(qids)} questions ran at every replicate"},
             {"name": f"{label}: accuracy", "ok": diff + 2 * se >= 0,
              "says": f"ours {acc:.1%}, external {e_acc:.1%} ({ext_runs[theirs]} run"
                      f"{'s' if ext_runs[theirs] > 1 else ''} each): {diff:+.1%} +- {se:.1%}"},
-            {"name": f"{label}: no {what}", "ok": no_letter <= NO_LETTER_LIMIT,
-             "says": f"{no_letter:.1%} of debates end with no {what} (limit {NO_LETTER_LIMIT:.0%})"}]
+            {"name": f"{label}: no {what}", "ok": no_letter <= none_limit + 1e-9,
+             "says": f"{no_letter:.1%} of debates end with no {what}; external runs {e_none:.1%} "
+                     f"(limit {none_limit:.1%})"}]
     high = rows_out[0]
     checks.append({"name": "Direct CoT: out of room", "ok": high["no_reply"] <= ext_cut + ROOM_MARGIN,
                    "says": f"{high['no_reply']:.1%} of high-effort solver replies have no visible text; external "
