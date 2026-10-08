@@ -1,7 +1,7 @@
 # Shared setup of the cluster pipeline (sourced, never run on its own): the model family and dataset
 # from the arguments, every path and option, the server check, and steps 1 and 2 (the external
-# baselines on the test split and on the search questions, unless EXTERNAL_BASELINES=0 (HLE: then
-# only on the comparison's questions), and the dev split). Both
+# baselines on the test split and on the search questions, unless EXTERNAL_BASELINES=0 (HLE and MATH:
+# then only on the comparison's questions), and the dev split). Both
 # run_compare_external_cluster.sh and run_pipeline_cluster.sh source it, so they always share the settings.
 # The first argument is the model family (gptoss, qwen, qwen9b or qwen4b), the second the dataset
 # (supergpqa, hle or math).
@@ -139,7 +139,13 @@ case "$DATASET" in
         # sentence, as in run4)
         EXECUTOR=(--plain-instruction --last-round-vote --count-read-summaries)
         SEARCH_OPTS=(--high-cost 3 --turn-cap 15 --total-cap 21)
-        N_DEV="${N_DEV_ASKED:-100}"; TIE=(--tie-questions 1); MID_TEST=0; COMPARE_EXTERNAL=1
+        N_DEV="${N_DEV_ASKED:-100}"; TIE=(--tie-questions 1); MID_TEST=0
+        # as on HLE (2026-10-08): the external baselines are run separately, so none on the test split or
+        # the 200 search questions, and steps 5 and 9 show no external rows; the comparison before the
+        # search runs on the first 25 search questions of each group, one external run against one of
+        # ours, with the collaborator's Self-Refine (baselines/run_baselines.py, the same on every dataset)
+        COMPARE_EXTERNAL=1; EXTERNAL_BASELINES=0; COMPARE_PER_GROUP=25; COMPARE_RUNS=1
+        SR_ARGS=(--max-tokens 28672 --feedback-max-tokens 24576 --recover --recover-feedback)
         PROTOCOLS="direct_high,self_refine_high"
         # every family starts from the qwen9b MATH run's seeds (as gptoss run4 started from qwen9b run2's)
         REUSE_SEEDS_FROM=""
