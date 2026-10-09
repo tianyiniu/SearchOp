@@ -92,7 +92,8 @@ MODELS = {
 
 def use_python(python: str) -> None:
     """Start this script again under `python` (the project's venv) unless it already runs there."""
-    if Path(sys.prefix).resolve() == Path(python).parent.parent.resolve():
+    if Path(sys.prefix).resolve() == Path(python).parent.parent.resolve() \
+            or Path(sys.executable).resolve() == Path(python).resolve():
         return
     if not Path(python).exists():
         raise SystemExit(f"{python} does not exist: pass --python with the project's venv")
@@ -372,7 +373,9 @@ def main() -> None:
     p.add_argument("--direct-max-tokens", type=int, default=28672)
     p.add_argument("--feedback-max-tokens", type=int, default=24576,
                    help="Self-Refine's feedback turn: the same room as its answer turns")
-    p.add_argument("--python", default=VENV_PYTHON, help="the project's venv, which runs every step")
+    p.add_argument("--python", default=VENV_PYTHON if Path(VENV_PYTHON).exists() else sys.executable,
+                   help="the project's venv, which runs every step (default: this server's venv where it "
+                        "exists, else the Python this script was started with, as on a rented GPU)")
     p.add_argument("--max-retries", type=int, default=5)
     p.add_argument("--judge-model", default=None, help="HLE: the judge (default judge_answers.JUDGE_MODEL)")
     p.add_argument("--judge-cache", default=None, help="HLE: the verdict cache (default: the search's)")

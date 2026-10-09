@@ -13,8 +13,13 @@ echo "gpt-oss-20b: $N_GPUS copies, one per GPU, on $CUDA_DEVICES, port $PORT"
 
 # One compile cache per GPU model.
 GPU_TAG=$(nvidia-smi -i "${CUDA_DEVICES%%,*}" --query-gpu=name --format=csv,noheader | tr -c 'A-Za-z0-9\n' '_')
-export VLLM_CACHE_ROOT="/nas-ssd2/tianyin4/cache/vllm_by_gpu/$GPU_TAG"
-echo "vLLM cache: $VLLM_CACHE_ROOT"
+# This server's NAS; elsewhere (a rented GPU) vLLM's own cache and the Hugging Face cache.
+DOWNLOAD=()
+if [[ -d /nas-ssd2/tianyin4/cache ]]; then
+  export VLLM_CACHE_ROOT="/nas-ssd2/tianyin4/cache/vllm_by_gpu/$GPU_TAG"
+  echo "vLLM cache: $VLLM_CACHE_ROOT"
+  DOWNLOAD=(--download-dir /nas-ssd2/tianyin4/cache/pretrained_models)
+fi
 
 # Busy-card check and NCCL settings.
 nvidia-smi -i "$CUDA_DEVICES" --query-gpu=index,memory.used,memory.total --format=csv
@@ -45,7 +50,7 @@ fi
 
 CUDA_VISIBLE_DEVICES="$CUDA_DEVICES" exec vllm serve "openai/gpt-oss-20b" \
   --host localhost --port "$PORT" \
-  --download-dir /nas-ssd2/tianyin4/cache/pretrained_models \
+  "${DOWNLOAD[@]}" \
   --max-model-len 32768 \
   --data-parallel-size "$N_GPUS" \
   --enable-prefix-caching \
