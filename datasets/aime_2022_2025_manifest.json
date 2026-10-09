@@ -1,0 +1,45 @@
+{
+ "source": {
+  "repo": "allenai/aime-2022-2025",
+  "revision": "73e1eba765ad5847cdb5d1e2e7aaf7b22b585798"
+ },
+ "seed": 0,
+ "questions": {
+  "train": 60,
+  "test": 60
+ },
+ "by_contest": {
+  "2022 AIME I": {
+   "train": 8,
+   "test": 7
+  },
+  "2022 AIME II": {
+   "train": 7,
+   "test": 8
+  },
+  "2023 AIME I": {
+   "train": 8,
+   "test": 7
+  },
+  "2023 AIME II": {
+   "train": 7,
+   "test": 8
+  },
+  "2024 AIME I": {
+   "train": 8,
+   "test": 7
+  },
+  "2024 AIME II": {
+   "train": 7,
+   "test": 8
+  },
+  "2025 AIME I": {
+   "train": 8,
+   "test": 7
+  },
+  "2025 AIME II": {
+   "train": 7,
+   "test": 8
+  }
+ }
+}

@@ -1,0 +1,671 @@
+{
+ "clusters": "outputs/describe_aime_v1/clusters_train.json",
+ "rep": "description",
+ "mh_weight": 0.5,
+ "mh_max_mean": 0.9,
+ "knn_k": 10,
+ "train_agreement": 1.0,
+ "embed_model": "microsoft/harrier-oss-v1-0.6b",
+ "routes": {
+  "aime_2022_I_12": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.440912,
+   "distances": {
+    "0": 1.339079,
+    "1": 0.898167
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2022_I_14": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.450767,
+   "distances": {
+    "0": 0.753266,
+    "1": 1.204033
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "aime_2022_I_08": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.654644,
+   "distances": {
+    "0": 0.672729,
+    "1": 1.327373
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "aime_2022_I_05": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.688937,
+   "distances": {
+    "0": 0.600806,
+    "1": 1.289743
+   },
+   "knn": 0,
+   "question": 1
+  },
+  "aime_2022_I_15": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.535804,
+   "distances": {
+    "0": 1.270983,
+    "1": 0.73518
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2022_I_06": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.252104,
+   "distances": {
+    "0": 1.197715,
+    "1": 0.94561
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2022_I_02": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.328542,
+   "distances": {
+    "0": 1.25229,
+    "1": 0.923747
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2022_II_10": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.232984,
+   "distances": {
+    "0": 1.238948,
+    "1": 1.005963
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2022_II_15": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.990847,
+   "distances": {
+    "0": 0.391139,
+    "1": 1.381985
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "aime_2022_II_14": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.68353,
+   "distances": {
+    "0": 1.275817,
+    "1": 0.592288
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2022_II_13": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.495333,
+   "distances": {
+    "0": 1.270085,
+    "1": 0.774751
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2022_II_07": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.831599,
+   "distances": {
+    "0": 0.500366,
+    "1": 1.331966
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "aime_2022_II_03": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.717159,
+   "distances": {
+    "0": 0.573413,
+    "1": 1.290572
+   },
+   "knn": 0,
+   "question": 1
+  },
+  "aime_2022_II_04": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.109255,
+   "distances": {
+    "0": 1.140417,
+    "1": 1.031162
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2022_II_11": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.902713,
+   "distances": {
+    "0": 0.464087,
+    "1": 1.3668
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "aime_2023_I_14": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.298774,
+   "distances": {
+    "0": 1.259051,
+    "1": 0.960277
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2023_I_09": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.631811,
+   "distances": {
+    "0": 1.332868,
+    "1": 0.701057
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2023_I_03": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.123044,
+   "distances": {
+    "0": 1.207641,
+    "1": 1.084597
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2023_I_08": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.652587,
+   "distances": {
+    "0": 0.550686,
+    "1": 1.203273
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "aime_2023_I_01": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.339442,
+   "distances": {
+    "0": 0.820526,
+    "1": 1.159969
+   },
+   "knn": 0,
+   "question": 1
+  },
+  "aime_2023_I_12": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.703707,
+   "distances": {
+    "0": 0.595738,
+    "1": 1.299444
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "aime_2023_I_06": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.009548,
+   "distances": {
+    "0": 1.115493,
+    "1": 1.105945
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2023_II_05": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.531958,
+   "distances": {
+    "0": 1.297945,
+    "1": 0.765987
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2023_II_15": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.398227,
+   "distances": {
+    "0": 1.314625,
+    "1": 0.916398
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2023_II_01": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.202549,
+   "distances": {
+    "0": 1.029895,
+    "1": 1.232443
+   },
+   "knn": 0,
+   "question": 1
+  },
+  "aime_2023_II_07": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.401682,
+   "distances": {
+    "0": 0.771045,
+    "1": 1.172728
+   },
+   "knn": 0,
+   "question": 1
+  },
+  "aime_2023_II_13": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.140759,
+   "distances": {
+    "0": 1.22429,
+    "1": 1.083531
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2023_II_10": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.342334,
+   "distances": {
+    "0": 1.214259,
+    "1": 0.871925
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2023_II_11": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.49081,
+   "distances": {
+    "0": 1.305121,
+    "1": 0.814311
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2023_II_08": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.084569,
+   "distances": {
+    "0": 1.138974,
+    "1": 1.054405
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2024_I_13": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.919754,
+   "distances": {
+    "0": 1.409777,
+    "1": 0.490023
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2024_I_14": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.805574,
+   "distances": {
+    "0": 0.541896,
+    "1": 1.34747
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "aime_2024_I_05": {
+   "group": 0,
+   "second": 1,
+   "margin": 1.129041,
+   "distances": {
+    "0": 0.312142,
+    "1": 1.441183
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "aime_2024_I_10": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.953399,
+   "distances": {
+    "0": 0.477076,
+    "1": 1.430475
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "aime_2024_I_07": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.194459,
+   "distances": {
+    "0": 1.121876,
+    "1": 0.927417
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2024_I_04": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.256404,
+   "distances": {
+    "0": 1.186722,
+    "1": 0.930318
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2024_I_15": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.156687,
+   "distances": {
+    "0": 0.958392,
+    "1": 0.801705
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2024_II_13": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.194531,
+   "distances": {
+    "0": 1.191754,
+    "1": 0.997223
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2024_II_02": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.589729,
+   "distances": {
+    "0": 1.273208,
+    "1": 0.683478
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2024_II_05": {
+   "group": 0,
+   "second": 1,
+   "margin": 1.078696,
+   "distances": {
+    "0": 0.382276,
+    "1": 1.460972
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "aime_2024_II_03": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.525016,
+   "distances": {
+    "0": 1.271027,
+    "1": 0.746011
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2024_II_09": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.241702,
+   "distances": {
+    "0": 1.125013,
+    "1": 0.883311
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2024_II_12": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.17181,
+   "distances": {
+    "0": 0.799323,
+    "1": 0.971133
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "aime_2024_II_06": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.720438,
+   "distances": {
+    "0": 1.301037,
+    "1": 0.5806
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2024_II_01": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.301908,
+   "distances": {
+    "0": 1.226369,
+    "1": 0.924461
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2025_I_13": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.311723,
+   "distances": {
+    "0": 0.828868,
+    "1": 1.140591
+   },
+   "knn": 0,
+   "question": 1
+  },
+  "aime_2025_I_10": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.480692,
+   "distances": {
+    "0": 1.247163,
+    "1": 0.766471
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2025_I_07": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.233568,
+   "distances": {
+    "0": 1.147724,
+    "1": 0.914156
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2025_I_05": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.365431,
+   "distances": {
+    "0": 1.239147,
+    "1": 0.873716
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2025_I_15": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.632996,
+   "distances": {
+    "0": 1.334932,
+    "1": 0.701936
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2025_I_09": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.427296,
+   "distances": {
+    "0": 0.778676,
+    "1": 1.205972
+   },
+   "knn": 0,
+   "question": 1
+  },
+  "aime_2025_I_11": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.408807,
+   "distances": {
+    "0": 1.262683,
+    "1": 0.853875
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2025_II_12": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.067765,
+   "distances": {
+    "0": 1.010666,
+    "1": 1.078431
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "aime_2025_II_10": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.139846,
+   "distances": {
+    "0": 1.103936,
+    "1": 0.964091
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2025_II_05": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.538189,
+   "distances": {
+    "0": 0.690191,
+    "1": 1.22838
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "aime_2025_II_09": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.287365,
+   "distances": {
+    "0": 1.216012,
+    "1": 0.928647
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2025_II_13": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.290921,
+   "distances": {
+    "0": 1.226036,
+    "1": 0.935114
+   },
+   "knn": 1,
+   "question": 1
+  },
+  "aime_2025_II_03": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.129906,
+   "distances": {
+    "0": 0.931424,
+    "1": 1.06133
+   },
+   "knn": 0,
+   "question": 1
+  },
+  "aime_2025_II_06": {
+   "group": 0,
+   "second": 1,
+   "margin": 0.598411,
+   "distances": {
+    "0": 0.664993,
+    "1": 1.263404
+   },
+   "knn": 0,
+   "question": 0
+  },
+  "aime_2025_II_08": {
+   "group": 1,
+   "second": 0,
+   "margin": 0.652273,
+   "distances": {
+    "0": 1.357343,
+    "1": 0.70507
+   },
+   "knn": 1,
+   "question": 1
+  }
+ }
+}

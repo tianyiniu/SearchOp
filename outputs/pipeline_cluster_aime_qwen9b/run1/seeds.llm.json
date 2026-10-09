@@ -1,0 +1,110 @@
+[
+ {
+  "name": "llm_g0_spatial_crosscheck",
+  "group": 0,
+  "strategy": "Independent solutions expose different spatial readings; a high-effort verifier checks an agreed calculation, while disagreement prompts a fresh expert solution before synthesis.",
+  "program": {
+   "plan": [
+    {
+     "personas": [
+      "solver",
+      "solver"
+     ]
+    }
+   ],
+   "rules": [
+    {
+     "when": [
+      "plan_left"
+     ],
+     "do": "continue"
+    },
+    {
+     "when": [
+      "step==1",
+      "r1_majority==2"
+     ],
+     "do": "verifier|high"
+    },
+    {
+     "when": [
+      "step==1"
+     ],
+     "do": "expert|high|blind"
+    },
+    {
+     "when": [
+      "last_round:expert"
+     ],
+     "do": "synthesizer"
+    }
+   ],
+   "default": "stop:last_commit"
+  },
+  "usage": {
+   "input": 5318,
+   "output": 1407
+  }
+ },
+ {
+  "name": "llm_g1_enumeration_audit",
+  "group": 1,
+  "strategy": "Three independent attempts test the candidate search; a high-effort critic audits likely agreements for omitted cases, while scattered answers trigger a fresh enumeration.",
+  "program": {
+   "plan": [
+    {
+     "personas": [
+      "solver",
+      "solver",
+      "solver"
+     ]
+    }
+   ],
+   "rules": [
+    {
+     "when": [
+      "plan_left"
+     ],
+     "do": "continue"
+    },
+    {
+     "when": [
+      "step==1",
+      "r1_majority>=2"
+     ],
+     "do": "critic|high"
+    },
+    {
+     "when": [
+      "step==1"
+     ],
+     "do": "expert_solver|high|blind"
+    },
+    {
+     "when": [
+      "last_round:critic",
+      "kept_answer"
+     ],
+     "do": "stop:vote"
+    },
+    {
+     "when": [
+      "last_round:critic"
+     ],
+     "do": "synthesizer"
+    },
+    {
+     "when": [
+      "last_round:expert+solver"
+     ],
+     "do": "synthesizer"
+    }
+   ],
+   "default": "stop:last_commit"
+  },
+  "usage": {
+   "input": 5318,
+   "output": 1407
+  }
+ }
+]

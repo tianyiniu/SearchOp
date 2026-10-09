@@ -11,7 +11,10 @@ self-consistency, Self-Refine, MAD) are **not** part of this work. Tianyi runs t
 | 1 | SuperGPQA | 200 of the 300 train questions (3 groups) | the 1,000-question test split | [section 3](#3-supergpqa-search-and-the-1000-question-test) |
 | 2 | GPQA-Diamond | no search: it uses the SuperGPQA programs of experiment 1 | the 198 questions | [section 4](#4-gpqa-diamond-the-supergpqa-programs-on-gpqa) |
 | 3 | HLE (text only) | 200 of the 800 train questions (4 groups) | the 200 test questions | [section 5](#5-hle-search-and-test) |
-| 4 | MATH level 5 | 200 of the 300 train questions (4 groups) | the 662 test questions | [section 6](#6-math-level-5-search-and-test) |
+| 4 | AIME 2022-2025 | 40 of the 60 train problems (2 groups) | the 60 test problems | [section 6](#6-aime-search-and-test) |
+
+MATH level 5 is dropped: every model scored 95-98% on it, which leaves no room to show a
+difference. AIME replaces it for all three models (Qwen 3.5 4B, Qwen 3.5 9B and gpt-oss-20b).
 
 **Already done for you:**
 - **Question groups and routes, for all four datasets.** The groups were made from the train
@@ -57,7 +60,7 @@ The scripts run `python3` from your `PATH`, so activate this environment before 
 Only HLE uses a paid API. Its answers are free text, so a judge model (`gpt-6-luna`, through the
 OpenAI API) grades them. The other datasets need no key:
 - SuperGPQA and GPQA-Diamond are multiple choice, so their letters are graded locally.
-- MATH is graded locally with `math-verify`.
+- AIME is graded locally with `math-verify` (its answers are integers in `\boxed{}`).
 
 Nothing else calls the API: the groups, routes and seeds are already made.
 
@@ -206,23 +209,34 @@ bash run_pipeline_cluster.sh qwen4b hle 2>&1 | tee -a outputs/pipeline_cluster_h
 
 **Result:** `outputs/pipeline_cluster_hle_qwen4b/run1/test_eval/results_k3.md`.
 
-## 6. MATH level 5: search and test
+## 6. AIME: search and test
+
+AIME 2022-2025 has 120 problems, split 60 train and 60 test with 15 of each year on each side
+(`scripts/prepare_aime.py`). The 60 train problems form 2 groups: geometry (26) and counting,
+number theory and algebra (34). 10 problems of each group are held back as the dev split, so the
+search runs on 40. The seeds were written with the Qwen 3.5 9B setup and are copied, so every
+model starts from the same programs.
 
 ```bash
-mkdir -p outputs/pipeline_cluster_math_qwen4b/run1
-bash run_compare_external_cluster.sh qwen4b math 2>&1 | tee -a outputs/pipeline_cluster_math_qwen4b/run1/compare.log
+mkdir -p outputs/pipeline_cluster_aime_qwen4b/run1
+bash run_compare_external_cluster.sh qwen4b aime 2>&1 | tee -a outputs/pipeline_cluster_aime_qwen4b/run1/compare.log
 ```
 
-- The comparison uses 100 questions: the first 25 search questions of each of the 4 groups.
-- Check `outputs/pipeline_cluster_math_qwen4b/run1/external_baselines.md` as section 2 says.
+- The comparison uses all 40 search problems, with 1 run each.
+- Check `outputs/pipeline_cluster_aime_qwen4b/run1/external_baselines.md` as section 2 says. With
+  only 40 problems, the automatic accuracy check catches only a gap of about 10 points or more.
 - Then start the search:
 
 ```bash
-bash run_pipeline_cluster.sh qwen4b math 2>&1 | tee -a outputs/pipeline_cluster_math_qwen4b/run1/pipeline.log
+bash run_pipeline_cluster.sh qwen4b aime 2>&1 | tee -a outputs/pipeline_cluster_aime_qwen4b/run1/pipeline.log
 ```
 
-**Result:** `outputs/pipeline_cluster_math_qwen4b/run1/test_eval/results_k3.md`, which covers the
-662 test questions.
+AIME replies are long. In a check with the 9B, finished replies used 13,000-22,000 tokens, and 2
+of 8 ran out of the window (the recovery step found an answer for one of them). Expect each AIME
+debate to take longer than one on the other datasets.
+
+**Result:** `outputs/pipeline_cluster_aime_qwen4b/run1/test_eval/results_k3.md`, which covers the 60
+test problems.
 
 ## 7. What a search run does
 
@@ -259,7 +273,7 @@ A run folder grows to as much as 1 GB.
 When a run ends, send Tianyi its whole output folder:
 - `outputs/pipeline_cluster_qwen4b/`, which holds SuperGPQA and GPQA-Diamond;
 - `outputs/pipeline_cluster_hle_qwen4b/`;
-- `outputs/pipeline_cluster_math_qwen4b/`;
+- `outputs/pipeline_cluster_aime_qwen4b/`;
 - the comparisons' external-baseline files, `baselines/results/*qwen35_4b_think*search_cap*`.
 
 **Send them directly (for example `tar` and `scp`), never through GitHub.** The HLE and GPQA

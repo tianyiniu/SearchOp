@@ -4,7 +4,7 @@
 # qwen4b SuperGPQA: then only on the comparison's questions), and the dev split). Both
 # run_compare_external_cluster.sh and run_pipeline_cluster.sh source it, so they always share the settings.
 # The first argument is the model family (gptoss, qwen, qwen9b or qwen4b), the second the dataset
-# (supergpqa, hle or math).
+# (supergpqa, hle, math or aime).
 
 FAMILY="${1:?gptoss, qwen, qwen9b or qwen4b}"
 DATASET="${2:-supergpqa}"
@@ -12,6 +12,7 @@ RUNNAME="run3"                                       # the SuperGPQA run directo
 SUPERGPQA_OPTS=(--high-cost 3 --turn-cap 20 --judge-persona --any-round-width)   # run3's search options
 N_DEV_ASKED="${N_DEV:-}"                             # N_DEV=... from the environment, if given
 N_DEV="${N_DEV_ASKED:-0}"                            # train questions held out as a dev split (0: none)
+DEV_PER_GROUP=""                                     # the dev split drawn per group (AIME): this many from each
 TIE=()                                               # the search's and champion step's tie rule (none: exact ties)
 REUSE_SEEDS_FROM=""                                  # a run directory whose seeds.json this run starts from
 REUSE_TRAIN_ALL=0                                    # 1: the train baselines start from the whole-train files
@@ -166,11 +167,39 @@ case "$DATASET" in
         SEARCH_Q="$OUT/search_questions_$QTAG.json"
         BNAME_TRAIN="${BTAG}_$(basename "$TRAIN" .json)_search_$QTAG"     # ..._math_l5_300_train_search_train100
         REUSE_TRAIN_FROM="" ;;
-    *) echo "dataset must be supergpqa, hle or math" >&2; exit 1 ;;
+    aime)                                            # AIME 2022-2025 (2026-10-08): MATH's design; it replaces MATH,
+        # on which every model scored 95-98%. 60 train problems in 2 groups (26, 34), 60 test problems
+        TRAIN="${TRAIN:-datasets/aime_2022_2025_train.json}"
+        TEST="${TEST:-datasets/aime_2022_2025_test.json}"
+        CLUSTERS="${CLUSTERS:-outputs/describe_aime_v1/clusters_train.json}"
+        ROUTES="${ROUTES:-outputs/describe_aime_v1/routes_test.json}"
+        OUT="${OUT:-outputs/pipeline_cluster_aime_$FTAG}"
+        RUN="$OUT/run1"
+        PER_GROUP=0                                  # the dev split decides what is held out
+        REUSE_TEST_FROM=""
+        JUDGE=(); ANSWERS=(--answers math)           # answers in \boxed{}, compared and graded by math-verify
+        EXECUTOR=(--plain-instruction --last-round-vote --count-read-summaries)
+        SEARCH_OPTS=(--high-cost 3 --turn-cap 15 --total-cap 21)
+        # 10 dev questions from each group (20 in all), drawn per group; the other 40 (16 and 24) are the
+        # search questions
+        DEV_PER_GROUP=10; N_DEV=20; TIE=(--tie-questions 1); MID_TEST=0
+        # the comparison runs on all 40 search questions (a cap of 24 per group takes every one), one
+        # external run against one of ours; no other external baselines, as on HLE and MATH
+        COMPARE_EXTERNAL=1; EXTERNAL_BASELINES=0; COMPARE_PER_GROUP=24; COMPARE_RUNS=1
+        SR_ARGS=(--max-tokens 28672 --feedback-max-tokens 24576 --recover --recover-feedback)
+        PROTOCOLS="direct_high,self_refine_high"
+        # every family starts from the qwen9b AIME run's seeds (written here: the seed writer uses the API)
+        REUSE_SEEDS_FROM=""
+        [[ "$FAMILY" != qwen9b ]] && REUSE_SEEDS_FROM="../pipeline_cluster_aime_qwen9b/run1"
+        QTAG="train$N_DEV"
+        SEARCH_Q="$OUT/search_questions_$QTAG.json"
+        BNAME_TRAIN="${BTAG}_$(basename "$TRAIN" .json)_search_$QTAG"     # ..._aime_2022_2025_train_search_train20
+        REUSE_TRAIN_FROM="" ;;
+    *) echo "dataset must be supergpqa, hle, math or aime" >&2; exit 1 ;;
 esac
-# MATH and HLE: a search of another family starts from the qwen9b seeds of the dataset, so they must
+# MATH, HLE and AIME: a search of another family starts from the qwen9b seeds of the dataset, so they must
 # exist first (the comparison step, run_compare_external_cluster.sh, needs no seeds)
-if [[ ( "$DATASET" == math || "$DATASET" == hle ) && -n "$REUSE_SEEDS_FROM"
+if [[ ( "$DATASET" == math || "$DATASET" == hle || "$DATASET" == aime ) && -n "$REUSE_SEEDS_FROM"
       && "$(basename "$0")" == run_pipeline_cluster.sh
       && ! -f "$RUN/seeds.json" && ! -f "$OUT/$REUSE_SEEDS_FROM/seeds.json" ]]; then
     echo "$OUT/$REUSE_SEEDS_FROM/seeds.json does not exist: run the qwen9b $DATASET pipeline first" \
@@ -219,7 +248,7 @@ if [[ "$LEN" != "$WINDOW" ]]; then
          "(or set WINDOW=$LEN to run with it; the window is part of every recording's key)" >&2; exit 1
 fi
 for f in "$TRAIN" "$TEST" "$CLUSTERS" "$ROUTES"; do
-    [[ -f "$f" ]] || { echo "$f is missing (run_describe_v3.sh, run_describe_hle.sh or run_describe_math.sh makes" \
+    [[ -f "$f" ]] || { echo "$f is missing (run_describe_v3.sh, run_describe_hle.sh, run_describe_math.sh or run_describe_aime.sh makes" \
                             "the clusters and routes)" >&2; exit 1; }
 done
 
@@ -302,7 +331,9 @@ fi
 # (the same file unless those change) and the baselines are run and scored on them alone.
 if (( N_DEV > 0 )); then
     echo "[$(stamp)] step 2: dev split of $TRAIN ($N_DEV dev questions, seed 0)"
-    "$PYTHON" scripts/split_train_dev.py --dataset "$TRAIN" --n-dev "$N_DEV" --seed 0 --out "$SPLITS"
+    split_args=(--n-dev "$N_DEV")
+    [[ -n "$DEV_PER_GROUP" ]] && split_args=(--clusters "$CLUSTERS" --dev-per-group "$DEV_PER_GROUP")
+    "$PYTHON" scripts/split_train_dev.py --dataset "$TRAIN" "${split_args[@]}" --seed 0 --out "$SPLITS"
 fi
 echo "[$(stamp)] step 2: $( (( EXTERNAL_BASELINES )) && echo "external baselines on the search questions" || echo "the search questions, with no external baselines" ) ($( (( N_DEV > 0 )) && echo "the groups' train-split questions" || { [[ "$PER_GROUP" == 0 ]] && echo "every question" || echo "at most $PER_GROUP per group"; }))"
 "$PYTHON" scripts/train_baselines.py --export --clusters "$CLUSTERS" --per-group "$PER_GROUP" \
