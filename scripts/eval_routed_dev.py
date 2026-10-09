@@ -396,7 +396,7 @@ def write_report(ctx: SimpleNamespace, reps: list[int]) -> int:
                "| group | questions | " + " | ".join(f"its own, {label}" + ("" if routed_only else
                                                                            f" | other groups', {label} (mean)")
                                                       for _, label in sets)
-               + " | global | " + " | ".join(baselines) + " |",
+               + " | global" + "".join(f" | {b}" for b in baselines) + " |",
                "|---|---|" + ("---|" if routed_only else "---|---|") * len(sets) + "---|" + "---|" * len(baselines)]
     per_group = {}
 
@@ -417,7 +417,7 @@ def write_report(ctx: SimpleNamespace, reps: list[int]) -> int:
         report.append(f"| {g} | {len(qs)} | " + " | ".join(f"{d[prefix]:.1%}" + ("" if routed_only else
                                                                                    f" | {d['other_' + prefix]:.1%}")
                                                           for prefix, _ in sets)
-                      + f" | {d['global']:.1%} | " + " | ".join(f"{d['baselines'][b]:.1%}" for b in baselines) + " |")
+                      + f" | {d['global']:.1%}" + "".join(f" | {d['baselines'][b]:.1%}" for b in baselines) + " |")
 
     result = {"model": args.model, "settings": ctx.settings, "run": str(args.run), "routes": str(args.routes),
               "n_questions": len(qids), "reps": n, "reps_planned": args.reps, "table": table,

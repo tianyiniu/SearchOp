@@ -163,8 +163,21 @@ def test_eval(seeds_path: Path, routes: Path):
         check(abs(f["table"]["routed, strongest grid programs"]["avg@1"]
                   - sum(f["programs"][f["roles"][f"grid_{r[q]['group']}"]]["reps"]["0"][q][0] for q in r) / N_DEV) < 1e-9,
               "routed only: the routed row is each question's own group program")
+        bad = {d: md_table_errors(TMP / d / f"results_k{k}.md")
+               for d, k in (("step9_cached", 3), ("step9_fresh", 1), ("grid_only", 3))}
+        check(not any(bad.values()), "every report table has the same number of cells on every line", str(bad))
     finally:
         hidden.rename(run / "champions.json")
+    # with the champions as well: each group's champion and grid program on its own group's questions
+    calls = dict(T.MODEL_CALLS)
+    run_cli(EV, args + ["--routed-only", "--baselines", "", "--out", str(TMP / "routed_champions"), "--live-cache",
+                        str(run / "dev_eval" / next(f.name for f in (run / "dev_eval").glob("rounds_*.jsonl")))])
+    c = json.loads((TMP / "routed_champions" / "results_k3.json").read_text())
+    same = ("routed, held-out champions", "routed, strongest grid programs", "global champion")
+    check(all(c["table"][k] == res["table"][k] for k in same) and dict(T.MODEL_CALLS) == calls
+          and "held-out champions - strongest grid programs" in c["differences"]
+          and not md_table_errors(TMP / "routed_champions" / "results_k3.md"),
+          "routed only with the champions: the same routed and global scores, no model call")
     try:                                   # a call cap that stops step 9 part way stops it nonzero
         run_cli(EV, args + ["--out", str(TMP / "capped"), "--max-total-calls", "5"])
         check(False, "the call cap stops the evaluation nonzero")
@@ -177,6 +190,19 @@ def test_eval(seeds_path: Path, routes: Path):
         check(True, "settings that differ from the search are refused")
     finally:
         P.SF.set_visible_reasoning(False)
+
+
+def md_table_errors(path: Path) -> list[int]:
+    """Lines of a markdown report whose table rows do not have the separator line's number of cells."""
+    lines, bad = path.read_text().splitlines(), []
+    for i, line in enumerate(lines):
+        if line.startswith("|---"):
+            j, n = i + 1, line.count("|")
+            bad += [i - 1] if lines[i - 1].count("|") != n else []
+            while j < len(lines) and lines[j].startswith("|"):
+                bad += [j] if lines[j].count("|") != n else []
+                j += 1
+    return bad
 
 
 def run_files(run: Path):
