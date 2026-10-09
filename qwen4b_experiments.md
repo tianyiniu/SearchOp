@@ -162,8 +162,10 @@ bash run_pipeline_cluster.sh qwen4b supergpqa 2>&1 | tee -a outputs/pipeline_clu
 What the run does:
 - It holds back 100 of the 300 train questions as a dev split.
 - It searches for 10 generations on the other 200.
-- It chooses each group's champion on the dev questions (step 8b).
-- It runs on the **1,000 test questions**, 3 times each (step 9).
+- It runs each group's strongest search program on the **1,000 test questions**, 3 times each
+  (step 9).
+- It does not use the dev questions by default. To choose each group's champion on them first
+  (step 8b), add `--champions` to the command.
 
 **Result:** `outputs/pipeline_cluster_qwen4b/run1/test_eval/results_k3.md`.
 
@@ -171,7 +173,7 @@ What the run does:
 
 GPQA-Diamond has no train split, so there is no search on it. Its 198 questions were routed into
 the SuperGPQA groups by the method the SuperGPQA test questions use: 164 to group 0, 34 to group 1
-and none to group 2. Each question runs its group's champion from section 3.
+and none to group 2. Each question runs its group's strongest search program from section 3.
 
 Run this **after the SuperGPQA run has finished**, with the same server:
 
@@ -204,7 +206,8 @@ bash run_pipeline_cluster.sh qwen4b hle 2>&1 | tee -a outputs/pipeline_cluster_h
   tarball).
 - The search uses 200 search questions: 50 from each of the 4 groups, after 100 dev questions are
   held back.
-- It runs 10 generations, then the champion step, then the 200 test questions 3 times each.
+- It runs 10 generations, then the 200 test questions 3 times each. The 100 dev questions are not
+  used (they are used only with `--champions`).
 - The judge grades every new answer, through the API key.
 
 **Result:** `outputs/pipeline_cluster_hle_qwen4b/run1/test_eval/results_k3.md`.
@@ -249,20 +252,22 @@ test problems.
 4. **Generations 1 to 10:** each generation makes 2 waves of children. A wave makes one child for
    each slot. There are two slots for each group and one for the whole set: 7 slots with 3 groups,
    9 with 4. A new best program is confirmed with a second run before it is kept.
-5. **The champion step (8b):** the 5 strongest distinct programs of each group run on that group's
-   dev questions, twice. The best becomes the group's champion.
-6. **The test (step 9):** each test question runs its group's champion 3 times. The table also
-   shows the strongest search program of each group, the one global champion, and our
-   `direct_high` and `self_refine_high` as reference rows.
+5. **The test (step 9):** each test question runs its group's strongest search program 3 times.
+   The table also shows the strongest search program over all groups, and our `direct_high` and
+   `self_refine_high` as reference rows.
+
+The champion step (8b) runs only with `--champions`. Then the 5 strongest distinct programs of each
+group run on that group's dev questions, twice, and the best becomes the group's champion. The test
+then runs the champions, and the table shows them beside the strongest search programs.
 
 **Main files in the run folder:**
 - `test_eval/results_k3.md` and `.json`: the test results;
-- `champions.json`: the chosen programs;
+- `champions.json`: the chosen programs (only with `--champions`);
 - `summary.json` and `generations.jsonl`: the search;
 - `archive.jsonl`: every program tried.
 
 **For planning, the Qwen 3.5 9B runs on our server** (2 RTX PRO 6000 cards):
-- **SuperGPQA:** the search took 11 hours. The champion step took 2 hours. The test on 300
+- **SuperGPQA:** the search took 11 hours. The champion step (not run by default) took 2 hours. The test on 300
   questions took 4 hours, so expect about 3 times that on 1,000.
 - **HLE:** generation 0 took 7 hours, then about 3.3 hours per generation.
 

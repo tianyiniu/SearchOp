@@ -10,13 +10,18 @@
 #   7. a look at the test split halfway: the slot holders of generation 5 (and the rows of step 9),
 #      1 replicate -> <run>/test_eval_gen5
 #   8. search, generations 6..10
-#   9. evaluation on the test split, 3 replicates -> <run>/test_eval: with a dev split, the routed
-#      champions (step 8b) and beside them the routed slot-A holders, and the global champion; without
-#      one, the routed slot-A holders and the global slot holder; then the in-executor protocols and
-#      the external baselines of step 1
+#   8b. only with --champions and a dev split: the champion step on the dev questions -> <run>/champions.json
+#   9. evaluation on the test split, 3 replicates -> <run>/test_eval: the routed slot-A holders (each
+#      group's strongest grid program) and the global slot holder; with --champions and a dev split,
+#      the routed champions (step 8b), beside them the routed slot-A holders, and the global champion;
+#      then the in-executor protocols and the external baselines of step 1
 # Every step is resumable: run the script again after an interruption and finished work is kept.
 #
-#     bash run_pipeline_cluster.sh <gptoss|qwen|qwen9b> [supergpqa|hle]      (the dataset defaults to supergpqa)
+#     bash run_pipeline_cluster.sh <gptoss|qwen|qwen9b> [supergpqa|hle] [--champions]   (the dataset defaults to supergpqa)
+#
+#     --champions: run step 8b and evaluate its champions in step 9. Off by default (2026-10-09): after the
+#     search, step 9 runs the strongest grid programs, and the dev questions (if any) are not used. The
+#     dev split itself is unchanged, so the search questions are the same either way.
 #
 #     mkdir -p outputs/pipeline_cluster_gptoss/run4
 #     bash run_compare_external_cluster.sh gptoss 2>&1 | tee -a outputs/pipeline_cluster_gptoss/run4/compare.log
@@ -196,6 +201,12 @@
 # seed on all of them (with --tie-questions 1: by more than one question, in exchange for fewer turns).
 set -euo pipefail
 cd "$(dirname "$0")"
+PICK_CHAMPIONS=0                                     # --champions: step 8b and its champions in step 9
+ARGS=()
+for a in "$@"; do
+    if [[ "$a" == --champions ]]; then PICK_CHAMPIONS=1; else ARGS+=("$a"); fi
+done
+set -- ${ARGS[@]+"${ARGS[@]}"}                        # the family and the dataset, for the setup
 source pipeline_cluster_setup.sh
 
 # --- before the search: the comparison with the external baselines must have passed ----------------
@@ -335,7 +346,7 @@ test_eval() {  # out reps -> routed slot-A holders, global holder, in-executor p
         cp "$old" "$TEST_CACHE"
     fi
     local champs=(--no-champions)
-    (( N_DEV > 0 )) && [[ "$out" == "$RUN/test_eval" ]] && champs=()    # the champions exist only after step 8b
+    (( N_DEV > 0 && PICK_CHAMPIONS )) && [[ "$out" == "$RUN/test_eval" ]] && champs=()    # only after step 8b
     "$PYTHON" scripts/eval_routed_dev.py --run "$RUN" --routes "$ROUTES" --dataset "$TEST" "${champs[@]}" \
         --out "$out" --live-cache "$TEST_CACHE" --model "$MODEL" --base-urls "$BASE_URL" --workers "$WORKERS" \
         --reps "$reps" --baselines "$PROTOCOLS" "${EXECUTOR[@]}" --external "$(external "$BNAME_TEST")" \
@@ -362,7 +373,7 @@ echo "[$(stamp)] step 8: search, generations $((MID + 1))..$GENERATIONS"
 search "$GENERATIONS"
 check_generation "$GENERATIONS"
 
-# --- 8b. with a dev split: the champions, chosen on the dev questions ------------------------------
+# --- 8b. with --champions and a dev split: the champions, chosen on the dev questions -------------
 CHAMPIONS="$RUN/champions.json"
 check_champions() {  # every finalist and baseline of every group ran on every dev question, twice
     "$PYTHON" - "$CHAMPIONS" <<'EOF'
@@ -379,7 +390,7 @@ if bad:
 print("champion check: every program ran on every dev question")
 EOF
 }
-if (( N_DEV > 0 )); then
+if (( N_DEV > 0 && PICK_CHAMPIONS )); then
     if check_champions >/dev/null 2>&1; then
         echo "[$(stamp)] step 8b: $CHAMPIONS exists and is complete, skipping"
     else
@@ -389,10 +400,12 @@ if (( N_DEV > 0 )); then
             --pick-champions --reps 2 --baselines "" 2>&1 | tee -a "$RUN/search.log"   # finalists only
         check_champions || { echo "run the script again to redo the champion step" >&2; exit 1; }
     fi
+elif (( N_DEV > 0 )); then
+    echo "[$(stamp)] step 8b: skipped (no --champions): step 9 runs the strongest grid programs; the dev questions are not used"
 fi
 
 # --- 9. evaluation on the test split -------------------------------------------------------------
 echo "[$(stamp)] step 9: routed programs and baselines on $TEST, $K replicates"
 test_eval "$RUN/test_eval" "$K"
 
-echo "[$(stamp)] done: $RUN/train_baselines.md, $( (( MID_TEST )) && echo "$MID_OUT/results_k1.md, ")$RUN/test_eval/results_k$K.md, $RUN/summary.json$( (( N_DEV > 0 )) && echo ", $CHAMPIONS")"
+echo "[$(stamp)] done: $RUN/train_baselines.md, $( (( MID_TEST )) && echo "$MID_OUT/results_k1.md, ")$RUN/test_eval/results_k$K.md, $RUN/summary.json$( (( N_DEV > 0 && PICK_CHAMPIONS )) && echo ", $CHAMPIONS")"

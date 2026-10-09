@@ -726,7 +726,16 @@ class Search:
         turns (with --tie-questions t, every finalist within t held-out questions
         of the best mean ties, as in the slots). Also named: the cheapest of those programs within one paired
         standard error of the champion. The same over all search questions and
-        the union of the held-out samples gives a global champion."""
+        the union of the held-out samples gives a global champion.
+
+        The debates of every group run in one thread pool (since 2026-10-09; one
+        pool per group before, one after another), so the slowest debates of the
+        groups overlap instead of following each other. The groups' held-out
+        questions are disjoint, so no group's debate can read another's
+        recordings, and the same debates run as before. The global set runs
+        after them, as before: a debate the groups recorded (a program that is a
+        finalist of its group and of the global set) is read from the cache.
+        The champions are then decided set by set."""
         self.slots = self.compute_slots()
         hrng = random.Random(self.args.seed + 7)
         held: dict[int, list[str]] = {}
@@ -761,13 +770,21 @@ class Search:
                     break
             return picked
 
-        def evaluate(recs: list[ProgRecord], qids: list[str], label: str) -> dict[str, dict]:
-            """Held-out results are kept apart from the search record."""
-            shadow = {r.key: ProgRecord(r.program, r.name, r.lineage, r.gen) for r in recs}
+        def fill(shadow: dict[str, ProgRecord], qids: list[str]) -> None:
             for s in shadow.values():
                 for rep in reps:
                     self.replay(s, qids, rep)
-            self.run_jobs([(s, q, rep) for s in shadow.values() for rep in reps for q in qids], label)
+
+        def prepare(g: int | None, qids: list[str]):
+            """A set's finalists, its baselines that are not finalists, and a fresh record of each
+            (held-out results are kept apart from the search record), filled from the cache."""
+            fin = finalists(g)
+            extra = [b for b in baselines if b.key not in {r.key for r in fin}]
+            shadow = {r.key: ProgRecord(r.program, r.name, r.lineage, r.gen) for r in fin + extra}
+            fill(shadow, qids)
+            return fin, extra, shadow
+
+        def evaluate(recs: list[ProgRecord], shadow: dict[str, ProgRecord], qids: list[str]) -> dict[str, dict]:
             out = {}
             for r in recs:
                 s = shadow[r.key]
@@ -781,10 +798,9 @@ class Search:
                               "marks": {q: s.mark(q) or 0.0 for q in qids}}
             return out
 
-        def decide(g: int | None, qids: list[str], search_q: list[str]) -> dict:
-            fin = finalists(g)
-            extra = [b for b in baselines if b.key not in {r.key for r in fin}]
-            res = evaluate(fin + extra, qids, f"champions {'all' if g is None else 'group ' + str(g)}")
+        def decide(g: int | None, qids: list[str], search_q: list[str], fin: list[ProgRecord],
+                   extra: list[ProgRecord], shadow: dict[str, ProgRecord]) -> dict:
+            res = evaluate(fin + extra, shadow, qids)
             rows_f = []
             for r in fin + extra:
                 d = res[r.key]
@@ -824,10 +840,24 @@ class Search:
                         "baselines": [b.name for b in baselines], "per_group": {}}
         if tie_questions(self.args):                    # named only when used, as in the archive header
             result["tie_questions"] = tie_questions(self.args)
-        for g in self.group_ids:
-            result["per_group"][str(g)] = decide(g, held[g], self.gq[g])
         all_held = sorted({q for qs in held.values() for q in qs})
-        result["global"] = decide(None, all_held, self.qids)
+        sets = [(g, held[g], self.gq[g]) for g in self.group_ids] + [(None, all_held, self.qids)]
+        prepared = []
+        for part, label in ((sets[:-1], f"champions: {len(self.group_ids)} groups"), (sets[-1:], "champions all")):
+            done = [prepare(g, qids) for g, qids, _ in part]
+            # each group in the order it had alone; run_jobs runs a (program, question, replicate)
+            # asked for twice once, and the fill gives it to the other record from the cache
+            self.run_jobs([(s, q, rep) for (_, qids, _), (_, _, shadow) in zip(part, done)
+                           for s in shadow.values() for rep in reps for q in qids], label)
+            for (_, qids, _), (_, _, shadow) in zip(part, done):
+                fill(shadow, qids)
+            prepared += done
+        for (g, qids, search_q), (fin, extra, shadow) in zip(sets, prepared):
+            res = decide(g, qids, search_q, fin, extra, shadow)
+            if g is None:
+                result["global"] = res
+            else:
+                result["per_group"][str(g)] = res
         return result
 
 

@@ -647,6 +647,13 @@ def test_search(seeds_path: Path):
         ok &= cheap["vs_champion"]["within_one_se"] and (cheap["turns"] or 0) <= (champ["turns"] or 0)
         ok &= all(p["n_missing"] == 0 for p in res["programs"])
     check(ok, "each group: baselines scored, champion a finalist, cheapest within one SE no dearer")
+    # the groups' debates run in one pool, then the global set's: a program of a group and of the global
+    # set ran once on the group's questions, and the global set read that debate from the cache
+    glob = {p["key"]: p for p in champs["global"]["programs"]}
+    shared = [(p, glob[p["key"]]) for res in champs["per_group"].values() for p in res["programs"] if p["key"] in glob]
+    check(shared and all(p["marks"] == {q: g["marks"][q] for q in p["marks"]} for p, g in shared),
+          "a program of a group and of the global set has the same results on the group's questions in both",
+          f"{len(shared)} shared")
     held = {q for c in json.loads(CLUSTERS_V3.read_text())["clusters"] for q in c["held_out"] + c["subset"][3:]}
     used = {q for res in champs["per_group"].values() for p in res["programs"] for q in p["marks"]}
     check(used <= held and not used & set(qids), "held-out questions are not search questions")

@@ -7,8 +7,9 @@ three parts, run in this order:
    problems, 1 run each. Check its report before step 3.
 2. **The external baselines:** Direct CoT, self-consistency (5 samples), Self-Refine (2 rounds) and
    MAD (3 agents, 2 rounds), on the 60 test problems, 3 runs each. AFlow and MaAS are not run here.
-3. **The search and the test:** 10 generations on the 40 search problems, the champion step on the
-   20 dev problems, then the 60 test problems, 3 runs each.
+3. **The search and the test:** 10 generations on the 40 search problems, then the 60 test problems,
+   3 runs each, with each group's strongest search program. The 20 dev problems are used only with
+   `--champions`, which first chooses each group's champion on them.
 
 Everything the runs need is in the repo: the problems, the 2 groups, the routes, the dev split and
 the seeds (written once with the 9B setup; the 4B and gpt-oss copy them). AIME is graded locally with
@@ -73,7 +74,8 @@ Steps 1 and 2 are independent: step 2 can run while you check step 1.
   - gpt-oss's first prompt also asks it to write its reasoning in the reply, as on the other
     datasets.
 - `outputs/pipeline_cluster_aime_<family>/run1/test_eval/results_k3.md`: our routed programs on the
-  60 test problems, with the global champion and our `direct_high` and `self_refine_high`.
+  60 test problems, with the strongest search program over both groups and our `direct_high` and
+  `self_refine_high`.
 
 To move a run to another server, copy `outputs/pipeline_cluster_aime_<family>/` (without its `.lock`
 file) and the model's `baselines/results/*aime*` files, then run the same commands there.
