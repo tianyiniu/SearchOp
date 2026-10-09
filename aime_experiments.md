@@ -48,6 +48,7 @@ mkdir -p outputs/pipeline_cluster_aime_qwen9b/run1
 bash run_compare_external_cluster.sh qwen9b aime 2>&1 | tee -a outputs/pipeline_cluster_aime_qwen9b/run1/compare.log
 
 # 2. external baselines on the 60 test problems
+mkdir -p baselines/results
 python baselines/run_baselines.py --model qwen35-9b --data datasets/aime_2022_2025_test.json 2>&1 | tee -a baselines/results/aime_qwen35_9b.log
 
 # 3. search and test (it starts only after a passed comparison)
