@@ -74,8 +74,7 @@ Steps 1 and 2 are independent: step 2 can run while you check step 1.
   - gpt-oss's first prompt also asks it to write its reasoning in the reply, as on the other
     datasets.
 - `outputs/pipeline_cluster_aime_<family>/run1/test_eval/results_k3.md`: our routed programs on the
-  60 test problems, with the strongest search program over both groups and our `direct_high` and
-  `self_refine_high`.
+  60 test problems, with the strongest search program over both groups.
 
 To move a run to another server, copy `outputs/pipeline_cluster_aime_<family>/` (without its `.lock`
 file) and the model's `baselines/results/*aime*` files, then run the same commands there.

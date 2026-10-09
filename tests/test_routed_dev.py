@@ -128,6 +128,41 @@ def test_eval(seeds_path: Path, routes: Path):
               and abs(g["table"]["routed, strongest grid programs"]["avg@3"]
                       - res["table"]["routed, strongest grid programs"]["avg@3"]) < 1e-9,
               "--no-champions: same routed grid score as the full evaluation")
+        # step 9 since 2026-10-09: no champions, no in-executor protocols (--baselines ""), and each
+        # group's program on its own group's questions only (--routed-only)
+        step9 = ["--no-champions", "--baselines", "", "--routed-only"]
+        calls = dict(T.MODEL_CALLS)
+        run_cli(EV, args + step9 + ["--out", str(TMP / "step9_cached"), "--live-cache",
+                                    str(run / "dev_eval" / next(f.name for f in (run / "dev_eval")
+                                                                .glob("rounds_*.jsonl")))])
+        b = json.loads((TMP / "step9_cached" / "results_k3.json").read_text())
+        check(set(b["roles"]) == {f"grid_{g}" for g in range(6)} | {"global"}
+              and not any(k.startswith("in-executor") for k in b["table"])
+              and b["table"]["routed, strongest grid programs"] == g["table"]["routed, strongest grid programs"]
+              and b["table"]["global slot holder"] == g["table"]["global slot holder"]
+              and dict(T.MODEL_CALLS) == calls,
+              "step 9 on recorded debates: the grid programs and the global one only, the same scores, no model call",
+              str(sorted(b["roles"])))
+        check(not any(k.startswith(("random group", "best of")) or "knn route" in k or "question route" in k
+                      for k in b["table"]) and not any("other_grid" in d for d in b["per_group"].values())
+              and "unsure quarter -> global" in b["table"],
+              "routed only: the rows that need other groups' programs are left out, the others kept")
+        # from an empty cache: a group's program runs on its own group's questions only, the global one on
+        # every question, and a program holding both roles runs each question once
+        run_cli(EV, args + step9 + ["--out", str(TMP / "step9_fresh"), "--reps", "1"])
+        f = json.loads((TMP / "step9_fresh" / "results_k1.json").read_text())
+        own = {gg: {q for q in r if r[q]["group"] == gg} for gg in range(6)}
+        ran = {k: set(p["reps"]["0"]) for k, p in f["programs"].items()}
+        want: dict[str, set] = {}
+        for name, k in f["roles"].items():
+            want.setdefault(k, set()).update(set(r) if name == "global" else own[int(name.split("_")[1])])
+        rounds = sum(1 for _ in (TMP / "step9_fresh").glob("rounds_*.jsonl"))
+        check(ran == want and not any(f["missing"].values()) and rounds == 1,
+              "routed only, from an empty cache: each program ran exactly the questions of its roles",
+              f"{sum(map(len, ran.values()))} debates for {len(r)} questions")
+        check(abs(f["table"]["routed, strongest grid programs"]["avg@1"]
+                  - sum(f["programs"][f["roles"][f"grid_{r[q]['group']}"]]["reps"]["0"][q][0] for q in r) / N_DEV) < 1e-9,
+              "routed only: the routed row is each question's own group program")
     finally:
         hidden.rename(run / "champions.json")
     try:                                   # a call cap that stops step 9 part way stops it nonzero

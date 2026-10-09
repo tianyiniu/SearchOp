@@ -4,9 +4,10 @@
 # SuperGPQA group (outputs/describe_v3/routes_gpqa_diamond_test.json, made by
 # run_describe_gpqa_diamond.sh with the describer that made the groups) and runs that group's
 # program. The evaluation is step 9 of run_pipeline_cluster.sh on these questions: the routed slot-A
-# holders (each group's strongest grid program), the global slot holder, and the in-executor protocols
-# (direct_high, self_refine_high), 3 replicates; with --champions, the routed champions (step 8b), beside
-# them the routed slot-A holders, and the global champion. No external baselines (run_baselines.py
+# holders (each group's strongest grid program) and the global slot holder, 3 replicates; with
+# --champions, the routed champions (step 8b), beside them the routed slot-A holders, and the global
+# champion. Each group's program runs only on its own group's questions, the global program on every
+# question, and no in-executor protocols run (since 2026-10-09). No external baselines (run_baselines.py
 # runs those). Run it after run_pipeline_cluster.sh <family> supergpqa has finished (with --champions:
 # after it ran with --champions, which makes the champions), with the same model server:
 #
@@ -42,5 +43,5 @@ mkdir -p "$EVAL"
 echo "[$(stamp)] GPQA-Diamond: the routed programs of $RUN on $GPQA, $K replicates -> $EVAL"
 "$PYTHON" scripts/eval_routed_dev.py --run "$RUN" --routes "$GPQA_ROUTES" --dataset "$GPQA" "${champs[@]}" \
     --out "$EVAL" --live-cache "$EVAL/rounds_$TAGNAME.jsonl" --model "$MODEL" --base-urls "$BASE_URL" \
-    --workers "$WORKERS" --reps "$K" --baselines "$PROTOCOLS" "${EXECUTOR[@]}" 2>&1 | tee -a "$EVAL.log"
+    --workers "$WORKERS" --reps "$K" --baselines "$PROTOCOLS" --routed-only "${EXECUTOR[@]}" 2>&1 | tee -a "$EVAL.log"
 echo "[$(stamp)] done: $EVAL/results_k$K.md"

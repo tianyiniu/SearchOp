@@ -25,6 +25,12 @@ another model call. The rows:
                               any router over it could reach (it also collects
                               luck, so read it as a loose upper bound)
 
+With --routed-only (the pipeline's step 9 since 2026-10-09), each per-group program runs only on the
+questions routed to its group, and the global program and the protocols on every question; a program
+with several roles (the global program may also hold a group) runs each question once. The rows that
+need a program's results on other groups' questions are then left out: the knn and question routes,
+random group, best of (bound), and the other groups' column of the by-group table.
+
 Replicates are run one after another: every program on every question at
 replicate 1, then the tables (results_k1), then replicate 2 (results_k2), and
 so on. Each table has avg@1 (first replicate only), avg@n, pass@n (any
@@ -89,6 +95,10 @@ def main() -> None:
                     help="champions.json is not read (the champion step was skipped): only the strongest grid "
                          "programs are routed, and the one-program-for-everyone row is the program with the best "
                          "score over all search questions (summary.json, top_overall)")
+    ap.add_argument("--routed-only", action="store_true",
+                    help="each per-group program runs only on the questions routed to its group (the global "
+                         "program and the protocols on every question); the rows that need a program on other "
+                         "groups' questions are left out. Off by default: every program on every question")
     live = ap.add_argument_group("debate model")
     live.add_argument("--base-urls", default=P.DEFAULT_BASE_URLS)
     live.add_argument("--model", default=P.DEFAULT_MODEL)
@@ -178,8 +188,23 @@ def main() -> None:
                                else [int(p == per_q[q]["answer"]) for p in per_q[q]["preds"]]) for q in qids}
         if all("tokens" in per_q[q] for q in qids):
             external_tokens[label] = {q: per_q[q]["tokens"] for q in qids}
+    # the questions each role runs on: every question, or with --routed-only a per-group program's own
+    # group's; a program with several roles runs the union of theirs, each question once
+    set_prefixes = {prefix for prefix, _ in sets}
+
+    def role_qids(name: str) -> list[str]:
+        prefix, _, g = name.rpartition("_")
+        if args.routed_only and prefix in set_prefixes:
+            return [q for q in qids if routes[q]["group"] == int(g)]
+        return qids
+    role_q = {name: role_qids(name) for name in role}
+    need: dict[str, set[str]] = {}
+    for name, key in role.items():
+        need.setdefault(key, set()).update(role_q[name])
+    need_q = {key: [q for q in qids if q in s] for key, s in need.items()}
     log(f"{len(qids)} questions of {args.dataset.name}; {len(role)} roles, {len(records)} distinct programs; "
-        f"{args.reps} replicates; settings {settings}")
+        f"{sum(len(v) for v in need_q.values())} debates per replicate"
+        f"{' (routed only)' if args.routed_only else ''}; {args.reps} replicates; settings {settings}")
 
     out_dir = args.out or args.run / "dev_eval"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -189,7 +214,7 @@ def main() -> None:
                            max_total_calls=args.max_total_calls, api_key=args.api_key,
                            lock=not args.ignore_cache_lock)
     shim = SimpleNamespace(runner=runner, rows=rows, args=args)     # what Search.run_jobs/replay read
-    ctx = SimpleNamespace(args=args, settings=settings, records=records, role=role, routes=routes,
+    ctx = SimpleNamespace(args=args, settings=settings, records=records, role=role, role_q=role_q, routes=routes,
                           qids=qids, groups=groups, baselines=baselines, out_dir=out_dir,
                           sets=sets, global_label=global_label, external=external,
                           external_tokens=external_tokens)
@@ -199,9 +224,9 @@ def main() -> None:
         left = 0
         for rep in range(args.reps):
             for rec in records.values():
-                V3.Search.replay(shim, rec, qids, rep)
+                V3.Search.replay(shim, rec, need_q[rec.key], rep)
             if not args.no_live:
-                spent = V3.Search.run_jobs(shim, [(rec, q, rep) for rec in records.values() for q in qids],
+                spent = V3.Search.run_jobs(shim, [(rec, q, rep) for rec in records.values() for q in need_q[rec.key]],
                                            f"dev, replicate {rep + 1} of {args.reps}")
                 log(f"replicate {rep + 1}: {spent} speaker turns spent")
             left = write_report(ctx, list(range(rep + 1)))
@@ -227,7 +252,8 @@ def write_report(ctx: SimpleNamespace, reps: list[int]) -> int:
     args, records, role, routes, qids, groups, baselines = (ctx.args, ctx.records, ctx.role, ctx.routes,
                                                             ctx.qids, ctx.groups, ctx.baselines)
     n = len(reps)
-    missing = {name: sum(len(records[k].gaps(qids, rep)) for rep in reps) for name, k in role.items()}
+    routed_only, role_q = args.routed_only, ctx.role_q
+    missing = {name: sum(len(records[k].gaps(role_q[name], rep)) for rep in reps) for name, k in role.items()}
     if any(missing.values()):
         log(f"debates missing (counted as wrong): { {a: m for a, m in missing.items() if m} }")
 
@@ -259,12 +285,14 @@ def write_report(ctx: SimpleNamespace, reps: list[int]) -> int:
     main_prefix, main_label = sets[0]                    # the knn / question / unsure rows use this set
     by_margin = sorted(qids, key=lambda q: routes[q]["margin"])
     rows_: list[tuple[str, list]] = [(f"routed, {label}", routed_by(prefix, "group")) for prefix, label in sets]
-    rows_ += [(f"routed, {main_label}, knn route", routed_by(main_prefix, "knn")),
-              (f"routed, {main_label}, question route", routed_by(main_prefix, "question"))]
+    if not routed_only:                                  # these use other groups' programs
+        rows_ += [(f"routed, {main_label}, knn route", routed_by(main_prefix, "knn")),
+                  (f"routed, {main_label}, question route", routed_by(main_prefix, "question"))]
     for frac, label in ((0.25, "quarter"), (0.5, "half")):
         rows_.append((f"unsure {label} -> global",
                       routed_by(main_prefix, "group", set(by_margin[: int(frac * len(qids))]))))
-    rows_ += [(f"random group, {label} (expected)", spread(prefix)) for prefix, label in sets]
+    if not routed_only:
+        rows_ += [(f"random group, {label} (expected)", spread(prefix)) for prefix, label in sets]
     rows_ += [(global_label, [[(1.0, "global")] for _ in qids])]
     rows_ += [(f"in-executor {b}", [[(1.0, b)] for _ in qids]) for b in baselines]
 
@@ -290,7 +318,7 @@ def write_report(ctx: SimpleNamespace, reps: list[int]) -> int:
         table[f"external {label}"] = {"avg@1": mean_se([r[0] for r in runs])[0], f"avg@{n}": mean_se(avg)[0],
                                       "se": mean_se(avg)[1], f"pass@{n}": mean_se([max(r) for r in runs])[0],
                                       "turns": float("nan"), "tokens": tok_mean, "runs": min(len(r) for r in runs)}
-    for prefix, label in sets:
+    for prefix, label in ([] if routed_only else sets):  # needs every group's program on every question
         avg = [max(sum(marks(f"{prefix}_{g}", q)) / n for g in groups) for q in qids]
         per_q[f"best of {label} (bound)"] = avg
         table[f"best of {label} (bound)"] = {
@@ -340,8 +368,8 @@ def write_report(ctx: SimpleNamespace, reps: list[int]) -> int:
     report += ["", f"Differences in avg@{n}, with a paired standard error over questions:", "",
                "| row | minus | difference | paired ± | question |", "|---|---|---|---|---|"]
     for main, rand in [(f"routed, {label}", f"random group, {label} (expected)") for _, label in sets]:
-        against = [(rand, "is the routing itself worth anything"),
-                   (global_label, "are per-group programs worth anything")] + beat
+        against = ([] if routed_only else [(rand, "is the routing itself worth anything")]) + \
+                  [(global_label, "are per-group programs worth anything")] + beat
         for other, why in against:
             diff, se = V3.paired_se(per_q[main], per_q[other])
             diffs[f"{main} - {other}"] = {"diff": diff, "se": se}
@@ -357,17 +385,19 @@ def write_report(ctx: SimpleNamespace, reps: list[int]) -> int:
                       f"does picking on held-out questions help |")
 
     # the per-question turn cap: a debate it stopped ran a shorter program than the one on record
-    cut = {name: sum(P.cap_cuts(records[k], qids, rep) for rep in reps) for name, k in role.items()}
+    cut = {name: sum(P.cap_cuts(records[k], role_q[name], rep) for rep in reps) for name, k in role.items()}
     report += ["", f"Debates the turn cap stopped (the cap replaced a rule's round with the program's default "
-                   f"stop), of {len(qids) * n} per program:", "",
+                   f"stop), of " + ("the debates each program ran (its own group's questions, every question for "
+                                   "the global program)" if routed_only else f"{len(qids) * n} per program") + ":", "",
                "| program | debates stopped by the cap |", "|---|---|"]
     report += [f"| {name} | {c} |" for name, c in cut.items()]
 
     report += ["", f"avg@{n} by the group the question was routed to (nearest medoid):", "",
-               "| group | questions | " + " | ".join(f"its own, {label} | other groups', {label} (mean)"
+               "| group | questions | " + " | ".join(f"its own, {label}" + ("" if routed_only else
+                                                                           f" | other groups', {label} (mean)")
                                                       for _, label in sets)
                + " | global | " + " | ".join(baselines) + " |",
-               "|---|---|" + "---|---|" * len(sets) + "---|" + "---|" * len(baselines)]
+               "|---|---|" + ("---|" if routed_only else "---|---|") * len(sets) + "---|" + "---|" * len(baselines)]
     per_group = {}
 
     def acc(name: str, qs: list[str]) -> float:
@@ -381,9 +411,11 @@ def write_report(ctx: SimpleNamespace, reps: list[int]) -> int:
         d = {"n": len(qs), "global": acc("global", qs), "baselines": {b: acc(b, qs) for b in baselines}}
         for prefix, _ in sets:
             d[prefix] = acc(f"{prefix}_{g}", qs)
-            d[f"other_{prefix}"] = sum(acc(f"{prefix}_{h}", qs) for h in others) / max(len(others), 1)
+            if not routed_only:                          # other groups' programs did not run on these
+                d[f"other_{prefix}"] = sum(acc(f"{prefix}_{h}", qs) for h in others) / max(len(others), 1)
         per_group[str(g)] = d
-        report.append(f"| {g} | {len(qs)} | " + " | ".join(f"{d[prefix]:.1%} | {d['other_' + prefix]:.1%}"
+        report.append(f"| {g} | {len(qs)} | " + " | ".join(f"{d[prefix]:.1%}" + ("" if routed_only else
+                                                                                   f" | {d['other_' + prefix]:.1%}")
                                                           for prefix, _ in sets)
                       + f" | {d['global']:.1%} | " + " | ".join(f"{d['baselines'][b]:.1%}" for b in baselines) + " |")
 

@@ -253,8 +253,8 @@ test problems.
    each slot. There are two slots for each group and one for the whole set: 7 slots with 3 groups,
    9 with 4. A new best program is confirmed with a second run before it is kept.
 5. **The test (step 9):** each test question runs its group's strongest search program 3 times.
-   The table also shows the strongest search program over all groups, and our `direct_high` and
-   `self_refine_high` as reference rows.
+   The table also shows the strongest search program over all groups, which runs on every test
+   question. A group's program runs only on its own group's questions.
 
 The champion step (8b) runs only with `--champions`. Then the 5 strongest distinct programs of each
 group run on that group's dev questions, twice, and the best becomes the group's champion. The test

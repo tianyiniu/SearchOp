@@ -14,7 +14,9 @@
 #   9. evaluation on the test split, 3 replicates -> <run>/test_eval: the routed slot-A holders (each
 #      group's strongest grid program) and the global slot holder; with --champions and a dev split,
 #      the routed champions (step 8b), beside them the routed slot-A holders, and the global champion;
-#      then the in-executor protocols and the external baselines of step 1
+#      then the external baselines of step 1. Each group's program runs only on its own group's
+#      questions, the global program on every question (eval_routed_dev.py --routed-only), and no
+#      in-executor protocols run (since 2026-10-09)
 # Every step is resumable: run the script again after an interruption and finished work is kept.
 #
 #     bash run_pipeline_cluster.sh <gptoss|qwen|qwen9b> [supergpqa|hle] [--champions]   (the dataset defaults to supergpqa)
@@ -349,7 +351,7 @@ test_eval() {  # out reps -> routed slot-A holders, global holder, in-executor p
     (( N_DEV > 0 && PICK_CHAMPIONS )) && [[ "$out" == "$RUN/test_eval" ]] && champs=()    # only after step 8b
     "$PYTHON" scripts/eval_routed_dev.py --run "$RUN" --routes "$ROUTES" --dataset "$TEST" "${champs[@]}" \
         --out "$out" --live-cache "$TEST_CACHE" --model "$MODEL" --base-urls "$BASE_URL" --workers "$WORKERS" \
-        --reps "$reps" --baselines "$PROTOCOLS" "${EXECUTOR[@]}" --external "$(external "$BNAME_TEST")" \
+        --reps "$reps" --baselines "$PROTOCOLS" --routed-only "${EXECUTOR[@]}" --external "$(external "$BNAME_TEST")" \
         2>&1 | tee -a "$out.log"
 }
 

@@ -206,6 +206,10 @@ if [[ ( "$DATASET" == math || "$DATASET" == hle || "$DATASET" == aime ) && -n "$
          "(its step 3 writes the seeds every family starts from)" >&2; exit 1
 fi
 EXECUTOR+=("${ANSWERS[@]}" "${SEARCH_OPTS[@]}")      # seeds, search and test evaluation alike
+# the test evaluations (step 9, run_eval_gpqa_cluster.sh) run no in-executor protocols since 2026-10-09:
+# only the global program and each group's program on its own group's questions (--routed-only). Our
+# direct_high and self_refine_high still run in the comparison with the external baselines.
+PROTOCOLS=""
 CMP_Q="$SEARCH_Q"; BNAME_CMP="$BNAME_TRAIN"           # the comparison's questions and their external baselines
 if [[ -n "$COMPARE_PER_GROUP" ]]; then               # the first N of each group's search questions
     CMP_Q="$OUT/search_questions_cap${COMPARE_PER_GROUP}_dev$N_DEV.json"
