@@ -26,14 +26,16 @@ again and finished work is kept.
 
 ## The model servers
 
-Run one model at a time. The 9B and gpt-oss both use port 7472. Each script takes the GPUs to use,
-as a list such as `0` or `0,1` (one copy of the model per GPU).
+Run one model at a time. The 9B and gpt-oss both use port 7472. The `_rental` scripts serve each
+model exactly as our own servers do (model name, port, window, parsers, chat options). They use GPU
+0 by default and put the weights in `/workspace/models` when `/workspace` exists. On a machine with
+more GPUs, pass the list, such as `0,1`, for one copy of the model per GPU.
 
 | model | start the server | port | family name |
 |---|---|---|---|
-| Qwen 3.5 9B | `bash Model_hosting/deploy_qwen35_9b_a100.sh 0` | 7472 | `qwen9b` (baselines: `qwen35-9b`) |
-| Qwen 3.5 4B | `bash Model_hosting/deploy_qwen35_4b.sh 0` | 7473 | `qwen4b` (baselines: `qwen35-4b`) |
-| gpt-oss-20b | `bash Model_hosting/deploy_gpt_oss_20b.sh 0` | 7472 | `gptoss` (baselines: `gptoss-20b`) |
+| Qwen 3.5 9B | `bash Model_hosting/deploy_qwen35_9b_rental.sh` | 7472 | `qwen9b` (baselines: `qwen35-9b`) |
+| Qwen 3.5 4B | `bash Model_hosting/deploy_qwen35_4b_rental.sh` | 7473 | `qwen4b` (baselines: `qwen35-4b`) |
+| gpt-oss-20b | `bash Model_hosting/deploy_gpt_oss_20b_rental.sh` | 7472 | `gptoss` (baselines: `gptoss-20b`) |
 
 The server is ready when `curl localhost:<port>/v1/models` answers. Keep the 32,768-token window
 the scripts set: every run checks it.
