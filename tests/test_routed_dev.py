@@ -166,6 +166,42 @@ def test_eval(seeds_path: Path, routes: Path):
         bad = {d: md_table_errors(TMP / d / f"results_k{k}.md")
                for d, k in (("step9_cached", 3), ("step9_fresh", 1), ("grid_only", 3))}
         check(not any(bad.values()), "every report table has the same number of cells on every line", str(bad))
+        # --pool-replicates (step 9 since 2026-10-09): every replicate in one pool, the tables at the end
+        cache = str(run / "dev_eval" / next(f.name for f in (run / "dev_eval").glob("rounds_*.jsonl")))
+        calls = dict(T.MODEL_CALLS)
+        run_cli(EV, args + step9 + ["--pool-replicates", "--out", str(TMP / "step9_pooled_cached"), "--live-cache", cache])
+        tables = {k: (json.loads((TMP / "step9_pooled_cached" / f"results_k{k}.json").read_text()),
+                      json.loads((TMP / "step9_cached" / f"results_k{k}.json").read_text())) for k in (1, 2, 3)}
+        check(all(a["table"] == b["table"] and a["reps"] == b["reps"] == k for k, (a, b) in tables.items())
+              and dict(T.MODEL_CALLS) == calls,
+              "pooled replicates on recorded debates: the same three tables as one replicate after another, no model call")
+        run_cli(EV, args + step9 + ["--pool-replicates", "--out", str(TMP / "step9_pooled_fresh"), "--reps", "2"])
+        pf = json.loads((TMP / "step9_pooled_fresh" / "results_k2.json").read_text())
+        p1 = json.loads((TMP / "step9_pooled_fresh" / "results_k1.json").read_text())
+        check(pf["roles"] == f["roles"]
+              and all(set(p["reps"][rep]) == want[k] for k, p in pf["programs"].items() for rep in ("0", "1"))
+              and not any(pf["missing"].values()) and p1["reps"] == 1
+              and all(set(p["reps"]) == {"0"} for p in p1["programs"].values()),
+              "pooled replicates from an empty cache: each replicate runs exactly the questions of each role, "
+              "and results_k1 holds replicate 1 alone")
+        calls = dict(T.MODEL_CALLS)
+        run_cli(EV, args + step9 + ["--pool-replicates", "--out", str(TMP / "step9_pooled_fresh"), "--reps", "2"])
+        check(dict(T.MODEL_CALLS) == calls
+              and json.loads((TMP / "step9_pooled_fresh" / "results_k2.json").read_text())["table"] == pf["table"],
+              "a pooled rerun calls no model and gives the same tables")
+        try:                               # stopped part way (here by the call cap), then run again
+            run_cli(EV, args + step9 + ["--pool-replicates", "--out", str(TMP / "step9_pooled_stop"), "--reps", "2",
+                                        "--max-total-calls", "40"])
+            check(False, "a pooled evaluation stopped part way stops nonzero")
+        except SystemExit as exc:
+            check("call cap stopped the evaluation" in str(exc)
+                  and not (TMP / "step9_pooled_stop" / "results_k2.json").exists(),
+                  "a pooled evaluation stopped part way stops nonzero, with no table", str(exc)[:80])
+        run_cli(EV, args + step9 + ["--pool-replicates", "--out", str(TMP / "step9_pooled_stop"), "--reps", "2"])
+        ps = json.loads((TMP / "step9_pooled_stop" / "results_k2.json").read_text())
+        check(not any(ps["missing"].values())
+              and all(set(p["reps"][rep]) == want[k] for k, p in ps["programs"].items() for rep in ("0", "1")),
+              "run again, it finishes every debate of both replicates")
     finally:
         hidden.rename(run / "champions.json")
     # with the champions as well: each group's champion and grid program on its own group's questions

@@ -31,6 +31,11 @@ with several roles (the global program may also hold a group) runs each question
 need a program's results on other groups' questions are then left out: the knn and question routes,
 random group, best of (bound), and the other groups' column of the by-group table.
 
+With --pool-replicates (the pipeline's step 9 since 2026-10-09), every replicate's debates go into one
+thread pool, replicate 1's first, so a replicate's slowest debates overlap the next one's instead of
+leaving the server part idle; the same debates run (a recording is per replicate, never shared), and
+every table is written at the end.
+
 Replicates are run one after another: every program on every question at
 replicate 1, then the tables (results_k1), then replicate 2 (results_k2), and
 so on. Each table has avg@1 (first replicate only), avg@n, pass@n (any
@@ -99,6 +104,10 @@ def main() -> None:
                     help="each per-group program runs only on the questions routed to its group (the global "
                          "program and the protocols on every question); the rows that need a program on other "
                          "groups' questions are left out. Off by default: every program on every question")
+    ap.add_argument("--pool-replicates", action="store_true",
+                    help="every replicate's debates in one thread pool (replicate 1's first), the tables at the "
+                         "end: the same debates, without a wait for each replicate's slowest ones. Off by "
+                         "default: one replicate after another, its tables after each")
     live = ap.add_argument_group("debate model")
     live.add_argument("--base-urls", default=P.DEFAULT_BASE_URLS)
     live.add_argument("--model", default=P.DEFAULT_MODEL)
@@ -220,16 +229,30 @@ def main() -> None:
                           external_tokens=external_tokens)
     # one replicate at a time, every program on every question, and the tables
     # after each: the first-replicate numbers are out after a third of the work
+    # (with --pool-replicates, all of them in one pool and the tables at the end)
     try:
         left = 0
-        for rep in range(args.reps):
-            for rec in records.values():
-                V3.Search.replay(shim, rec, need_q[rec.key], rep)
-            if not args.no_live:
-                spent = V3.Search.run_jobs(shim, [(rec, q, rep) for rec in records.values() for q in need_q[rec.key]],
-                                           f"dev, replicate {rep + 1} of {args.reps}")
-                log(f"replicate {rep + 1}: {spent} speaker turns spent")
-            left = write_report(ctx, list(range(rep + 1)))
+        if args.pool_replicates and not args.no_live:
+            # every replicate in one pool, replicate 1's debates first; the tables at the end
+            for rep in range(args.reps):
+                for rec in records.values():
+                    V3.Search.replay(shim, rec, need_q[rec.key], rep)
+            spent = V3.Search.run_jobs(shim, [(rec, q, rep) for rep in range(args.reps) for rec in records.values()
+                                              for q in need_q[rec.key]],
+                                       f"dev, replicates 1-{args.reps} pooled")
+            log(f"replicates 1-{args.reps}: {spent} speaker turns spent")
+            for rep in range(args.reps):
+                left = write_report(ctx, list(range(rep + 1)))
+        else:
+            for rep in range(args.reps):
+                for rec in records.values():
+                    V3.Search.replay(shim, rec, need_q[rec.key], rep)
+                if not args.no_live:
+                    spent = V3.Search.run_jobs(shim, [(rec, q, rep) for rec in records.values()
+                                                      for q in need_q[rec.key]],
+                                               f"dev, replicate {rep + 1} of {args.reps}")
+                    log(f"replicate {rep + 1}: {spent} speaker turns spent")
+                left = write_report(ctx, list(range(rep + 1)))
         if left:                                  # a table with debates missing is not a result: stop nonzero
             raise SystemExit(f"{left} test debates are missing (server errors?); they are counted as wrong in "
                              f"the tables. Run the script again: it fills them from where it stopped.")
